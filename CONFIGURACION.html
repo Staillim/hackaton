@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartBurger - Configuración Rápida</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        .subtitle {
+            text-align: center;
+            opacity: 0.9;
+            margin-bottom: 40px;
+            font-size: 1.1em;
+        }
+        .step {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-left: 5px solid #4ade80;
+        }
+        .step-number {
+            display: inline-block;
+            background: #4ade80;
+            color: #1a1a1a;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 40px;
+            font-weight: bold;
+            font-size: 1.3em;
+            margin-right: 15px;
+        }
+        .step-title {
+            font-size: 1.3em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+        }
+        .link {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            word-break: break-all;
+        }
+        .link a {
+            color: #4ade80;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        .link a:hover {
+            text-decoration: underline;
+        }
+        .info {
+            background: rgba(59, 130, 246, 0.3);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            border-left: 4px solid #3b82f6;
+        }
+        .success {
+            background: rgba(34, 197, 94, 0.3);
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 30px;
+            text-align: center;
+            border: 2px solid #4ade80;
+        }
+        .emoji {
+            font-size: 2em;
+            margin-right: 10px;
+        }
+        ul {
+            margin-left: 20px;
+            margin-top: 10px;
+        }
+        li {
+            margin: 8px 0;
+        }
+        .code {
+            background: rgba(0,0,0,0.3);
+            padding: 3px 8px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🍔 SmartBurger</h1>
+        <div class="subtitle">Configuración de Base de Datos en 3 Pasos</div>
+
+        <div class="info">
+            <strong>📊 Tu Proyecto Supabase:</strong><br>
+            <span class="code">zcbwbxjeyhzolnjsorkf</span><br>
+            <strong>🌐 URL:</strong> <span class="code">https://zcbwbxjeyhzolnjsorkf.supabase.co</span>
+        </div>
+
+        <!-- PASO 1 -->
+        <div class="step">
+            <div class="step-title">
+                <span class="step-number">1</span>
+                <span>Obtener las API Keys</span>
+            </div>
+            <div class="link">
+                <span class="emoji">🔑</span>
+                <a href="https://supabase.com/dashboard/project/zcbwbxjeyhzolnjsorkf/settings/api" target="_blank">
+                    Abrir Settings → API
+                </a>
+            </div>
+            <ul>
+                <li>Busca la sección <strong>"Project API keys"</strong></li>
+                <li>Copia el <strong>anon/public</strong> key (empieza con <span class="code">eyJhbGc...</span>)</li>
+                <li>Copia el <strong>service_role</strong> key</li>
+                <li>Pégalas en el archivo <span class="code">.env.local</span></li>
+            </ul>
+        </div>
+
+        <!-- PASO 2 -->
+        <div class="step">
+            <div class="step-title">
+                <span class="step-number">2</span>
+                <span>Ejecutar Script de Tablas (schema.sql)</span>
+            </div>
+            <div class="link">
+                <span class="emoji">💾</span>
+                <a href="https://supabase.com/dashboard/project/zcbwbxjeyhzolnjsorkf/sql/new" target="_blank">
+                    Abrir SQL Editor
+                </a>
+            </div>
+            <ul>
+                <li>En tu proyecto, abre el archivo <span class="code">supabase/schema.sql</span></li>
+                <li>Copia TODO el contenido (Ctrl+A, Ctrl+C)</li>
+                <li>Pégalo en el SQL Editor de Supabase</li>
+                <li>Click en el botón verde <strong>"RUN"</strong></li>
+                <li>Espera a ver el mensaje <strong>"Success"</strong> ✅</li>
+            </ul>
+        </div>
+
+        <!-- PASO 3 -->
+        <div class="step">
+            <div class="step-title">
+                <span class="step-number">3</span>
+                <span>Cargar Datos Iniciales (seed.sql)</span>
+            </div>
+            <ul>
+                <li>Abre el archivo <span class="code">supabase/seed.sql</span></li>
+                <li>Copia TODO el contenido</li>
+                <li>Pégalo en el SQL Editor (misma ventana)</li>
+                <li>Click en <strong>"RUN"</strong> nuevamente</li>
+                <li>Verás los productos y datos de ejemplo cargados ✅</li>
+            </ul>
+        </div>
+
+        <div class="success">
+            <h2>🎉 ¡Listo para despegar!</h2>
+            <p style="margin-top: 15px;">Una vez completados los 3 pasos, ejecuta:</p>
+            <div style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 10px; margin-top: 15px; font-family: monospace;">
+                npm run dev
+            </div>
+            <p style="margin-top: 15px;">Abre: <strong>http://localhost:3000</strong></p>
+        </div>
+
+        <div class="info" style="margin-top: 30px; text-align: center;">
+            <strong>💬 Chat Inteligente con María Ya Configurado</strong><br>
+            <small>Memoria completa • Aprende gustos • Toma pedidos • 100% conversacional</small>
+        </div>
+    </div>
+</body>
+</html>
