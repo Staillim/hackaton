@@ -674,12 +674,89 @@ export const updateIngredient = async (id: string, updates: { stock_quantity?: n
     }
     
     console.log(`✅ [updateIngredient] Actualización exitosa:`, data);
+    
+    // 🔥 Si se actualizó el stock, verificar si hay alertas que resolver
+    if (updates.stock_quantity !== undefined && data) {
+      await autoResolveAlerts(id, data.stock_quantity, data.min_stock_alert);
+    }
+    
     return data;
   } catch (error: any) {
     console.error(`❌ [updateIngredient] Error en try-catch:`, error);
     throw error;
   }
 };
+
+// ─── Gestión de Alertas de Inventario ────────────────────────────────────────
+
+/**
+ * Auto-resolver alertas cuando el stock vuelve a niveles normales
+ */
+async function autoResolveAlerts(ingredientId: string, currentStock: number, minAlert: number) {
+  try {
+    // Si el stock está por encima del mínimo, resolver alertas activas
+    if (currentStock > minAlert) {
+      console.log(`🔔 [autoResolveAlerts] Stock normalizado (${currentStock} > ${minAlert}), resolviendo alertas...`);
+      
+      const { data, error } = await supabase
+        .from('inventory_alerts')
+        .update({ 
+          resolved: true, 
+          resolved_at: new Date().toISOString() 
+        })
+        .eq('ingredient_id', ingredientId)
+        .eq('resolved', false)
+        .select();
+      
+      if (error) {
+        console.error(`❌ [autoResolveAlerts] Error:`, error);
+      } else if (data && data.length > 0) {
+        console.log(`✅ [autoResolveAlerts] ${data.length} alerta(s) resuelta(s)`);
+      }
+    }
+  } catch (error) {
+    console.error(`❌ [autoResolveAlerts] Error en try-catch:`, error);
+    // No lanzar error, solo loguear (no queremos que falle la actualización por esto)
+  }
+}
+
+/**
+ * Marcar una alerta específica como resuelta
+ */
+export const resolveAlert = async (alertId: string) => {
+  const { data, error } = await supabase
+    .from('inventory_alerts')
+    .update({ 
+      resolved: true, 
+      resolved_at: new Date().toISOString() 
+    })
+    .eq('id', alertId)
+    .select()
+    .single();
+  
+  if (error) throw error;
+  return data;
+};
+
+/**
+ * Resolver todas las alertas de un ingrediente
+ */
+export const resolveAlertsByIngredient = async (ingredientId: string) => {
+  const { data, error } = await supabase
+    .from('inventory_alerts')
+    .update({ 
+      resolved: true, 
+      resolved_at: new Date().toISOString() 
+    })
+    .eq('ingredient_id', ingredientId)
+    .eq('resolved', false)
+    .select();
+  
+  if (error) throw error;
+  return data;
+};
+
+// ─── Promociones ──────────────────────────────────────────────────────────────
 
 export const getAllPromotions = async () => {
   const { data, error } = await supabase
