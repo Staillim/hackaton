@@ -155,3 +155,26 @@ export interface AnalyticsEvent {
   session_id?: string;
   created_at: string;
 }
+
+// Admin AI Agent
+export interface AdminAnalysis {
+  timestamp: string;
+  mock: boolean;
+  insights: {
+    summary: string;
+    topProducts: string[];
+    stockAlerts: string[];
+    peakHours: string;
+    promotionEffectiveness: string;
+    recommendations: string[];
+    urgentAlerts: string[];
+  };
+  metrics?: {
+    salesByProduct: Array<{ product: any; totalQuantity: number; totalRevenue: number }>;
+    salesByHour: Array<{ hour: number; sales: number; orders: number }>;
+    criticalStock: InventoryAlert[];
+    promotions: Promotion[];
+    yesterdaySales: number;
+    recentOrders: { total: number; completed: number; cancelled: number; avgTicket: string };
+  };
+}
