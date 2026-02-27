@@ -249,18 +249,10 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      console.log('🔍 Obteniendo datos frescos de DB...');
-      const [ingredients, promotions, products, orders] = await Promise.all([
-        getIngredients(),
-        getAllPromotions(),
-        getAllProducts(),
-        getOrders(),
-      ]);
-      console.log(`✅ Datos cargados: ${ingredients?.length} ingredientes, ${products?.length} productos, ${promotions?.length} promos, ${orders?.length} pedidos`);
-
-      const systemContext = buildSystemContext(
-        metrics, ingredients || [], promotions || [], products || [], orders || []
-      );
+      console.log('🔍 Construyendo contexto del sistema (SIN cachear datos)...');
+      
+      // NO cargar datos aquí - cada función debe consultar DB en tiempo real
+      const systemContext = await buildDynamicSystemContext(metrics);
 
       // Convertir historial a formato Gemini (user/model en lugar de user/assistant)
       const geminiHistory = history.map(m => ({
@@ -305,43 +297,44 @@ export async function POST(request: NextRequest) {
         let actionResult: ActionResult;
 
         try {
+          // 🔥 TODAS las funciones consultan DB en tiempo real (NO usan cache)
           switch (functionName) {
             case 'update_ingredient_stock':
               console.log('➡️  Ejecutando update_ingredient_stock con:', args);
-              actionResult = await executeUpdateStock(args.ingredient_name, args.quantity, ingredients || []);
+              actionResult = await executeUpdateStock(args.ingredient_name, args.quantity);
               console.log('✅ Resultado:', actionResult);
               break;
             case 'toggle_ingredient_available':
               console.log('➡️  Ejecutando toggle_ingredient_available con:', args);
-              actionResult = await executeToggleIngredient(args.ingredient_name, args.available, ingredients || []);
+              actionResult = await executeToggleIngredient(args.ingredient_name, args.available);
               console.log('✅ Resultado:', actionResult);
               break;
             case 'toggle_product':
-              actionResult = await executeToggleProduct(args.product_name, args.active, products || []);
+              actionResult = await executeToggleProduct(args.product_name, args.active);
               break;
             case 'set_product_featured':
-              actionResult = await executeSetFeatured(args.product_name, args.featured, products || []);
+              actionResult = await executeSetFeatured(args.product_name, args.featured);
               break;
             case 'update_product_price':
-              actionResult = await executeUpdatePrice(args.product_name, args.price, products || []);
+              actionResult = await executeUpdatePrice(args.product_name, args.price);
               break;
             case 'update_product_details':
-              actionResult = await executeUpdateProductDetails(args, products || []);
+              actionResult = await executeUpdateProductDetails(args);
               break;
             case 'toggle_promotion':
-              actionResult = await executeTogglePromotion(args.promotion_name, args.active, promotions || []);
+              actionResult = await executeTogglePromotion(args.promotion_name, args.active);
               break;
             case 'update_promotion_value':
-              actionResult = await executeUpdatePromotion(args, promotions || []);
+              actionResult = await executeUpdatePromotion(args);
               break;
             case 'create_promotion':
               actionResult = await executeCreatePromotion(args);
               break;
             case 'delete_promotion':
-              actionResult = await executeDeletePromotion(args.promotion_name, promotions || []);
+              actionResult = await executeDeletePromotion(args.promotion_name);
               break;
             case 'update_order_status':
-              actionResult = await executeUpdateOrderStatus(args.order_identifier, args.status, orders || []);
+              actionResult = await executeUpdateOrderStatus(args.order_identifier, args.status);
               break;
             case 'analyze_stock':
               actionResult = await executeAnalyzeStock();
@@ -353,7 +346,7 @@ export async function POST(request: NextRequest) {
               actionResult = await executeGetActiveOrders();
               break;
             case 'get_product_detail':
-              actionResult = await executeGetProductDetail(args.product_name, args.days || 30, products || []);
+              actionResult = await executeGetProductDetail(args.product_name, args.days || 30);
               break;
             default:
               actionResult = { type: functionName, description: 'Acción desconocida', success: false };
@@ -440,31 +433,34 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// ─── Ejecutores ───────────────────────────────────────────────────────────────
+// ─── Ejecutores (TODOS consultan DB en tiempo real) ──────────────────────────
 
-async function executeUpdateStock(name: string, quantity: number, ingredients: any[]): Promise<ActionResult> {
-  console.log(`🔍 [executeUpdateStock] Buscando ingrediente: "${name}"`);
+async function executeUpdateStock(name: string, quantity: number): Promise<ActionResult> {
+  console.log(`🔍 [executeUpdateStock] Buscando ingrediente en DB: "${name}"`);
   console.log(`📦 [executeUpdateStock] Cantidad a actualizar: ${quantity}`);
-  console.log(`📊 [executeUpdateStock] Total ingredientes disponibles: ${ingredients.length}`);
-  
-  const match = findByName(ingredients, name);
-  
-  if (!match) {
-    console.log(`❌ [executeUpdateStock] No se encontró ingrediente "${name}"`);
-    return { type: 'update_stock', description: `No encontré ingrediente "${name}"`, success: false };
-  }
-  
-  console.log(`✅ [executeUpdateStock] Ingrediente encontrado:`, {
-    id: match.id,
-    name: match.name,
-    stock_actual: match.stock_quantity,
-    unit: match.unit
-  });
   
   try {
-    console.log(`🔄 [executeUpdateStock] Llamando updateIngredient(${match.id}, { stock_quantity: ${quantity} })...`);
+    // 🔥 Consultar DB en tiempo real (NO usar cache)
+    const ingredients = await getIngredients();
+    console.log(`📊 [executeUpdateStock] ${ingredients?.length} ingredientes en DB`);
+    
+    const match = findByName(ingredients || [], name);
+    
+    if (!match) {
+      console.log(`❌ [executeUpdateStock] No se encontró ingrediente "${name}"`);
+      return { type: 'update_stock', description: `No encontré ingrediente "${name}"`, success: false };
+    }
+    
+    console.log(`✅ [executeUpdateStock] Ingrediente encontrado:`, {
+      id: match.id,
+      name: match.name,
+      stock_actual: match.stock_quantity,
+      unit: match.unit
+    });
+    
+    console.log(`🔄 [executeUpdateStock] Actualizando DB: ${match.name} -> ${quantity} ${match.unit}`);
     const result = await updateIngredient(match.id, { stock_quantity: quantity });
-    console.log(`✅ [executeUpdateStock] Base de datos actualizada exitosamente:`, result);
+    console.log(`✅ [executeUpdateStock] Base de datos actualizada:`, result);
     
     return { 
       type: 'update_stock', 
@@ -472,19 +468,18 @@ async function executeUpdateStock(name: string, quantity: number, ingredients: a
       success: true 
     };
   } catch (error: any) {
-    console.error(`❌ [executeUpdateStock] Error en base de datos:`, error);
-    console.error(`❌ [executeUpdateStock] Error message:`, error.message);
-    console.error(`❌ [executeUpdateStock] Error stack:`, error.stack);
+    console.error(`❌ [executeUpdateStock] Error:`, error);
     return { 
       type: 'update_stock', 
-      description: `Error al actualizar ${match.name}: ${error.message}`, 
+      description: `Error al actualizar stock: ${error.message}`, 
       success: false 
     };
   }
 }
 
-async function executeToggleIngredient(name: string, available: boolean, ingredients: any[]): Promise<ActionResult> {
-  const match = findByName(ingredients, name);
+async function executeToggleIngredient(name: string, available: boolean): Promise<ActionResult> {
+  const ingredients = await getIngredients(); // 🔥 Query DB en tiempo real
+  const match = findByName(ingredients || [], name);
   if (!match) return { type: 'toggle_ingredient', description: `No encontré ingrediente "${name}"`, success: false };
   await updateIngredient(match.id, { available });
   return {
@@ -494,31 +489,35 @@ async function executeToggleIngredient(name: string, available: boolean, ingredi
   };
 }
 
-async function executeToggleProduct(name: string, active: boolean, products: any[]): Promise<ActionResult> {
-  const match = findByName(products, name);
+async function executeToggleProduct(name: string, active: boolean): Promise<ActionResult> {
+  const products = await getAllProducts(); // 🔥 Query DB en tiempo real
+  const match = findByName(products || [], name);
   if (!match) return { type: 'toggle_product', description: `No encontré producto "${name}"`, success: false };
   await updateProduct(match.id, { active });
   return { type: 'toggle_product', description: `Producto "${match.name}" ${active ? 'activado' : 'desactivado'} en el menú`, success: true };
 }
 
-async function executeSetFeatured(name: string, featured: boolean, products: any[]): Promise<ActionResult> {
-  const match = findByName(products, name);
+async function executeSetFeatured(name: string, featured: boolean): Promise<ActionResult> {
+  const products = await getAllProducts(); // 🔥 Query DB en tiempo real
+  const match = findByName(products || [], name);
   if (!match) return { type: 'set_featured', description: `No encontré producto "${name}"`, success: false };
   await updateProduct(match.id, { featured });
   return { type: 'set_featured', description: `"${match.name}" ${featured ? 'marcado como destacado' : 'quitado de destacados'}`, success: true };
 }
 
-async function executeUpdatePrice(name: string, price: number, products: any[]): Promise<ActionResult> {
+async function executeUpdatePrice(name: string, price: number): Promise<ActionResult> {
   if (price <= 0) return { type: 'update_price', description: 'El precio debe ser mayor a 0', success: false };
-  const match = findByName(products, name);
+  const products = await getAllProducts(); // 🔥 Query DB en tiempo real
+  const match = findByName(products || [], name);
   if (!match) return { type: 'update_price', description: `No encontré producto "${name}"`, success: false };
   const oldPrice = match.base_price;
   await updateProduct(match.id, { base_price: price });
   return { type: 'update_price', description: `Precio de "${match.name}" actualizado: $${oldPrice} → $${price}`, success: true };
 }
 
-async function executeUpdateProductDetails(args: any, products: any[]): Promise<ActionResult> {
-  const match = findByName(products, args.product_name);
+async function executeUpdateProductDetails(args: any): Promise<ActionResult> {
+  const products = await getAllProducts(); // 🔥 Query DB en tiempo real
+  const match = findByName(products || [], args.product_name);
   if (!match) return { type: 'update_product', description: `No encontré producto "${args.product_name}"`, success: false };
 
   const updates: any = {};
@@ -532,18 +531,20 @@ async function executeUpdateProductDetails(args: any, products: any[]): Promise<
     return { type: 'update_product', description: 'No se especificaron campos a actualizar', success: false };
   }
   await updateProduct(match.id, updates);
-  return { type: 'update_product', description: `"${match.name}" actualizado: ${changes.join(', ')}`, success: true };
+  return { type: 'update_product', description: `Producto "${match.name}" actualizado: ${changes.join(', ')}`, success: true };
 }
 
-async function executeTogglePromotion(name: string, active: boolean, promotions: any[]): Promise<ActionResult> {
-  const match = findByName(promotions, name);
+async function executeTogglePromotion(name: string, active: boolean): Promise<ActionResult> {
+  const promotions = await getAllPromotions(); // 🔥 Query DB en tiempo real
+  const match = findByName(promotions || [], name);
   if (!match) return { type: 'toggle_promotion', description: `No encontré promoción "${name}"`, success: false };
   await updatePromotion(match.id, { active });
   return { type: 'toggle_promotion', description: `Promoción "${match.name}" ${active ? 'activada' : 'desactivada'}`, success: true };
 }
 
-async function executeUpdatePromotion(args: any, promotions: any[]): Promise<ActionResult> {
-  const match = findByName(promotions, args.promotion_name);
+async function executeUpdatePromotion(args: any): Promise<ActionResult> {
+  const promotions = await getAllPromotions(); // 🔥 Query DB en tiempo real
+  const match = findByName(promotions || [], args.promotion_name);
   if (!match) return { type: 'update_promotion', description: `No encontré promoción "${args.promotion_name}"`, success: false };
 
   const updates: any = {};
@@ -575,26 +576,28 @@ async function executeCreatePromotion(args: any): Promise<ActionResult> {
   const typeLabel = args.discount_type === 'percentage' ? `${args.discount_value}% dto` : `$${args.discount_value} dto`;
   return {
     type: 'create_promotion',
-    description: `Promoción "${args.name}" creada (${typeLabel}, mínimo $${args.min_purchase}, válida hasta ${args.end_date})`,
+    description: `Promoción "${args.name}" creada: ${typeLabel}, mín $${args.min_purchase}`,
     success: true,
   };
 }
 
-async function executeDeletePromotion(name: string, promotions: any[]): Promise<ActionResult> {
-  const match = findByName(promotions, name);
+async function executeDeletePromotion(name: string): Promise<ActionResult> {
+  const promotions = await getAllPromotions(); // 🔥 Query DB en tiempo real
+  const match = findByName(promotions || [], name);
   if (!match) return { type: 'delete_promotion', description: `No encontré promoción "${name}"`, success: false };
   await deletePromotion(match.id);
   return { type: 'delete_promotion', description: `Promoción "${match.name}" eliminada permanentemente`, success: true };
 }
 
-async function executeUpdateOrderStatus(identifier: string, status: string, orders: any[]): Promise<ActionResult> {
+async function executeUpdateOrderStatus(identifier: string, status: string): Promise<ActionResult> {
+  const orders = await getOrders(); // 🔥 Query DB en tiempo real
   let match: any = null;
 
   const id = identifier.toLowerCase().trim();
   if (id === 'último' || id === 'ultimo' || id === 'last') {
-    match = orders[0]; // getOrders ya viene ordenado por fecha desc
+    match = (orders || [])[0]; // getOrders ya viene ordenado por fecha desc
   } else {
-    match = orders.find(o =>
+    match = (orders || []).find(o =>
       o.order_number?.toLowerCase().includes(id) ||
       (o.customer_name || '').toLowerCase().includes(id) ||
       (o.customer_email || '').toLowerCase().includes(id)
@@ -688,7 +691,7 @@ async function executeAnalyzeSalesPeriod(days: number): Promise<ActionResult> {
 }
 
 async function executeGetActiveOrders(): Promise<ActionResult> {
-  const orders = await getOrders();
+  const orders = await getOrders(); // 🔥 Query DB en tiempo real
   const active = (orders || []).filter(o => o.status === 'pending' || o.status === 'preparing' || o.status === 'confirmed');
 
   if (active.length === 0) {
@@ -705,15 +708,16 @@ async function executeGetActiveOrders(): Promise<ActionResult> {
     `Pedidos activos: ${active.length}`,
     ...active.map(o => {
       const mins = Math.round((Date.now() - new Date(o.created_at).getTime()) / 60000);
-      return `  • ${o.order_number} | ${o.customer_name || 'sin nombre'} | $${parseFloat(String(o.final_amount)).toFixed(2)} | ${statusLabel[o.status] || o.status} | hace ${mins} min`;
+      return `  ${o.order_number} | ${o.customer_name || 'sin nombre'} | $${parseFloat(String(o.final_amount)).toFixed(2)} | ${statusLabel[o.status] || o.status} | hace ${mins} min`;
     }),
   ];
 
   return { type: 'get_active_orders', description: lines.join('\n'), success: true };
 }
 
-async function executeGetProductDetail(name: string, days: number, products: any[]): Promise<ActionResult> {
-  const match = findByName(products, name);
+async function executeGetProductDetail(name: string, days: number): Promise<ActionResult> {
+  const products = await getAllProducts(); // 🔥 Query DB en tiempo real
+  const match = findByName(products || [], name);
   if (!match) return { type: 'get_product_detail', description: `No encontré producto "${name}"`, success: false };
 
   const toDate = new Date().toISOString().split('T')[0];
@@ -747,14 +751,20 @@ function findByName(list: any[], query: string) {
   ) || null;
 }
 
-// ─── Contexto del sistema ─────────────────────────────────────────────────────
-function buildSystemContext(
-  metrics: Awaited<ReturnType<typeof getAdminMetrics>>,
-  ingredients: any[],
-  promotions: any[],
-  products: any[],
-  orders: any[]
+// ─── Contexto del sistema DINÁMICO (consulta DB cada vez) ────────────────────
+async function buildDynamicSystemContext(
+  metrics: Awaited<ReturnType<typeof getAdminMetrics>>
 ) {
+  // 🔥 Query DB en tiempo real para contexto fresco
+  console.log('🔄 [buildDynamicSystemContext] Consultando DB para contexto fresco...');
+  const [ingredients, promotions, products, orders] = await Promise.all([
+    getIngredients(),
+    getAllPromotions(),
+    getAllProducts(),
+    getOrders(),
+  ]);
+  console.log(`✅ [buildDynamicSystemContext] ${ingredients?.length} ingredientes, ${products?.length} productos, ${promotions?.length} promos, ${orders?.length} pedidos`);
+  
   const { salesByProduct, salesByHour, criticalStock, recentOrders, yesterdaySales } = metrics;
 
   const topProds = salesByProduct.slice(0, 8).map(p =>
@@ -767,19 +777,19 @@ function buildSystemContext(
       ).join('\n')
     : '  Sin alertas de stock.';
 
-  const ingList = ingredients.map(i =>
+  const ingList = (ingredients || []).map(i =>
     `  - ${i.name} (stock: ${i.stock_quantity} ${i.unit}, disponible: ${i.available ? 'sí' : 'NO'})`
   ).join('\n') || '  Sin ingredientes.';
 
-  const promoList = promotions.length > 0
-    ? promotions.map(p => `  - "${p.name}" (${p.active ? 'ACTIVA' : 'inactiva'}, ${p.discount_type} ${p.discount_value}, mín $${p.min_purchase})`).join('\n')
+  const promoList = (promotions || []).length > 0
+    ? (promotions || []).map(p => `  - "${p.name}" (${p.active ? 'ACTIVA' : 'inactiva'}, ${p.discount_type} ${p.discount_value}, mín $${p.min_purchase})`).join('\n')
     : '  Sin promociones.';
 
-  const prodList = products.slice(0, 15).map(p =>
+  const prodList = (products || []).slice(0, 15).map(p =>
     `  - "${p.name}" $${p.base_price} (${p.active ? 'activo' : 'inactivo'}${p.featured ? ', destacado' : ''})`
   ).join('\n') || '  Sin productos.';
 
-  const recentOrdersList = orders.slice(0, 8).map(o =>
+  const recentOrdersList = (orders || []).slice(0, 8).map(o =>
     `  - ${o.order_number} | ${o.customer_name || 'cliente'} | $${parseFloat(String(o.final_amount)).toFixed(2)} | ${o.status}`
   ).join('\n') || '  Sin pedidos recientes.';
 
