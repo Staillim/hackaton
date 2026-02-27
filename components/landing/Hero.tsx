@@ -130,7 +130,7 @@ export default function Hero() {
             <motion.div
               animate={{ y: [0, -15, 0], rotate: [0, 5, 0] }}
               transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-              className="absolute -top-8 -right-8 bg-red-600 text-white px-6 py-3 rounded-full font-bold shadow-lg"
+              className="absolute top-4 -right-8 z-20 bg-red-600 text-white px-6 py-3 rounded-full font-bold shadow-lg"
             >
               20% OFF
             </motion.div>
@@ -138,7 +138,7 @@ export default function Hero() {
             <motion.div
               animate={{ y: [0, 15, 0], rotate: [0, -5, 0] }}
               transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
-              className="absolute -bottom-8 -left-8 glass px-6 py-3 rounded-xl font-semibold"
+              className="absolute -bottom-8 -left-8 z-20 glass px-6 py-3 rounded-xl font-semibold"
             >
               🔥 Más Vendido
             </motion.div>
