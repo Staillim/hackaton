@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import {
   getAdminMetrics, getIngredients, getAllPromotions, getAllProducts, getOrders,
   getInventoryAlerts, getSalesByProductRange, getSalesByHour, getSalesByDayOfWeek,
@@ -10,8 +11,10 @@ import {
 // POST /api/admin/chat
 //
 // Max — Agente Autónomo de SmartBurger
-// Chat conversacional con OpenAI Function Calling (tool use).
+// Chat conversacional con Gemini Function Calling (tool use).
 // ─────────────────────────────────────────────────────────────────────────────
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -24,244 +27,199 @@ interface ActionResult {
   success: boolean;
 }
 
-// ─── Herramientas disponibles para Max ───────────────────────────────────────
+// ─── Herramientas disponibles para Max (formato Gemini) ──────────────────────
 const MAX_TOOLS = [
   // ── INGREDIENTES ────────────────────────────────────────────────────────────
   {
-    type: 'function' as const,
-    function: {
-      name: 'update_ingredient_stock',
-      description: 'Actualiza el stock (cantidad) de un ingrediente.',
-      parameters: {
-        type: 'object',
-        properties: {
-          ingredient_name: { type: 'string', description: 'Nombre exacto o parcial del ingrediente' },
-          quantity: { type: 'number', description: 'Nueva cantidad de stock' },
-        },
-        required: ['ingredient_name', 'quantity'],
+    name: 'update_ingredient_stock',
+    description: 'Actualiza el stock (cantidad) de un ingrediente.',
+    parameters: {
+      type: 'object',
+      properties: {
+        ingredient_name: { type: 'string', description: 'Nombre exacto o parcial del ingrediente' },
+        quantity: { type: 'number', description: 'Nueva cantidad de stock' },
       },
+      required: ['ingredient_name', 'quantity'],
     },
   },
   {
-    type: 'function' as const,
-    function: {
-      name: 'toggle_ingredient_available',
-      description: 'Marca un ingrediente como disponible o no disponible. Úsalo cuando un ingrediente no puede usarse temporalmente aunque tenga stock.',
-      parameters: {
-        type: 'object',
-        properties: {
-          ingredient_name: { type: 'string', description: 'Nombre exacto o parcial del ingrediente' },
-          available: { type: 'boolean', description: 'true = disponible, false = no disponible' },
-        },
-        required: ['ingredient_name', 'available'],
+    name: 'toggle_ingredient_available',
+    description: 'Marca un ingrediente como disponible o no disponible. Úsalo cuando un ingrediente no puede usarse temporalmente aunque tenga stock.',
+    parameters: {
+      type: 'object',
+      properties: {
+        ingredient_name: { type: 'string', description: 'Nombre exacto o parcial del ingrediente' },
+        available: { type: 'boolean', description: 'true = disponible, false = no disponible' },
       },
+      required: ['ingredient_name', 'available'],
     },
   },
   // ── PRODUCTOS ────────────────────────────────────────────────────────────────
   {
-    type: 'function' as const,
-    function: {
-      name: 'toggle_product',
-      description: 'Activa o desactiva un producto del menú (visible/oculto para clientes).',
-      parameters: {
-        type: 'object',
-        properties: {
-          product_name: { type: 'string', description: 'Nombre exacto o parcial del producto' },
-          active: { type: 'boolean', description: 'true = activo (visible), false = desactivado' },
-        },
-        required: ['product_name', 'active'],
+    name: 'toggle_product',
+    description: 'Activa o desactiva un producto del menú (visible/oculto para clientes).',
+    parameters: {
+      type: 'object',
+      properties: {
+        product_name: { type: 'string', description: 'Nombre exacto o parcial del producto' },
+        active: { type: 'boolean', description: 'true = activo (visible), false = desactivado' },
       },
+      required: ['product_name', 'active'],
     },
   },
   {
-    type: 'function' as const,
-    function: {
-      name: 'set_product_featured',
-      description: 'Destaca o quita de destacados un producto del menú.',
-      parameters: {
-        type: 'object',
-        properties: {
-          product_name: { type: 'string', description: 'Nombre exacto o parcial del producto' },
-          featured: { type: 'boolean', description: 'true = destacado, false = normal' },
-        },
-        required: ['product_name', 'featured'],
+    name: 'set_product_featured',
+    description: 'Destaca o quita de destacados un producto del menú.',
+    parameters: {
+      type: 'object',
+      properties: {
+        product_name: { type: 'string', description: 'Nombre exacto o parcial del producto' },
+        featured: { type: 'boolean', description: 'true = destacado, false = normal' },
       },
+      required: ['product_name', 'featured'],
     },
   },
   {
-    type: 'function' as const,
-    function: {
-      name: 'update_product_price',
-      description: 'Cambia el precio base de un producto del menú.',
-      parameters: {
-        type: 'object',
-        properties: {
-          product_name: { type: 'string', description: 'Nombre exacto o parcial del producto' },
-          price: { type: 'number', description: 'Nuevo precio base (número positivo)' },
-        },
-        required: ['product_name', 'price'],
+    name: 'update_product_price',
+    description: 'Cambia el precio base de un producto del menú.',
+    parameters: {
+      type: 'object',
+      properties: {
+        product_name: { type: 'string', description: 'Nombre exacto o parcial del producto' },
+        price: { type: 'number', description: 'Nuevo precio base (número positivo)' },
       },
+      required: ['product_name', 'price'],
     },
   },
   {
-    type: 'function' as const,
-    function: {
-      name: 'update_product_details',
-      description: 'Edita los detalles de un producto: nombre, descripción, calorías o tiempo de preparación.',
-      parameters: {
-        type: 'object',
-        properties: {
-          product_name: { type: 'string', description: 'Nombre exacto o parcial del producto a editar' },
-          new_name: { type: 'string', description: 'Nuevo nombre (opcional)' },
-          description: { type: 'string', description: 'Nueva descripción (opcional)' },
-          calories: { type: 'number', description: 'Nuevas calorías (opcional)' },
-          preparation_time: { type: 'number', description: 'Nuevo tiempo de preparación en minutos (opcional)' },
-        },
-        required: ['product_name'],
+    name: 'update_product_details',
+    description: 'Edita los detalles de un producto: nombre, descripción, calorías o tiempo de preparación.',
+    parameters: {
+      type: 'object',
+      properties: {
+        product_name: { type: 'string', description: 'Nombre exacto o parcial del producto a editar' },
+        new_name: { type: 'string', description: 'Nuevo nombre (opcional)' },
+        description: { type: 'string', description: 'Nueva descripción (opcional)' },
+        calories: { type: 'number', description: 'Nuevas calorías (opcional)' },
+        preparation_time: { type: 'number', description: 'Nuevo tiempo de preparación en minutos (opcional)' },
       },
+      required: ['product_name'],
     },
   },
   // ── PROMOCIONES ──────────────────────────────────────────────────────────────
   {
-    type: 'function' as const,
-    function: {
-      name: 'toggle_promotion',
-      description: 'Activa o desactiva una promoción existente.',
-      parameters: {
-        type: 'object',
-        properties: {
-          promotion_name: { type: 'string', description: 'Nombre exacto o parcial de la promoción' },
-          active: { type: 'boolean', description: 'true = activar, false = desactivar' },
-        },
-        required: ['promotion_name', 'active'],
+    name: 'toggle_promotion',
+    description: 'Activa o desactiva una promoción existente.',
+    parameters: {
+      type: 'object',
+      properties: {
+        promotion_name: { type: 'string', description: 'Nombre exacto o parcial de la promoción' },
+        active: { type: 'boolean', description: 'true = activar, false = desactivar' },
       },
+      required: ['promotion_name', 'active'],
     },
   },
   {
-    type: 'function' as const,
-    function: {
-      name: 'update_promotion_value',
-      description: 'Modifica el valor de descuento o la compra mínima de una promoción existente.',
-      parameters: {
-        type: 'object',
-        properties: {
-          promotion_name: { type: 'string', description: 'Nombre exacto o parcial de la promoción' },
-          discount_value: { type: 'number', description: 'Nuevo valor de descuento (porcentaje o monto fijo, opcional)' },
-          min_purchase: { type: 'number', description: 'Nueva compra mínima requerida (opcional)' },
-          max_uses: { type: 'number', description: 'Nuevo máximo de usos (opcional)' },
-        },
-        required: ['promotion_name'],
+    name: 'update_promotion_value',
+    description: 'Modifica el valor de descuento o la compra mínima de una promoción existente.',
+    parameters: {
+      type: 'object',
+      properties: {
+        promotion_name: { type: 'string', description: 'Nombre exacto o parcial de la promoción' },
+        discount_value: { type: 'number', description: 'Nuevo valor de descuento (porcentaje o monto fijo, opcional)' },
+        min_purchase: { type: 'number', description: 'Nueva compra mínima requerida (opcional)' },
+        max_uses: { type: 'number', description: 'Nuevo máximo de usos (opcional)' },
       },
+      required: ['promotion_name'],
     },
   },
   {
-    type: 'function' as const,
-    function: {
-      name: 'create_promotion',
-      description: 'Crea una nueva promoción. Úsala cuando el admin quiera lanzar un descuento nuevo.',
-      parameters: {
-        type: 'object',
-        properties: {
-          name: { type: 'string', description: 'Nombre de la promoción' },
-          description: { type: 'string', description: 'Descripción de la promoción (opcional)' },
-          discount_type: {
-            type: 'string',
-            enum: ['percentage', 'fixed', 'combo'],
-            description: 'Tipo: percentage (%), fixed (monto fijo), combo',
-          },
-          discount_value: { type: 'number', description: 'Valor del descuento (% o monto)' },
-          min_purchase: { type: 'number', description: 'Compra mínima para aplicar (0 si no hay mínimo)' },
-          end_date: { type: 'string', description: 'Fecha de fin en formato YYYY-MM-DD (obligatoria)' },
-          max_uses: { type: 'number', description: 'Número máximo de usos (opcional, omitir para ilimitado)' },
+    name: 'create_promotion',
+    description: 'Crea una nueva promoción. Úsala cuando el admin quiera lanzar un descuento nuevo.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Nombre de la promoción' },
+        description: { type: 'string', description: 'Descripción de la promoción (opcional)' },
+        discount_type: {
+          type: 'string',
+          enum: ['percentage', 'fixed', 'combo'],
+          description: 'Tipo: percentage (%), fixed (monto fijo), combo',
         },
-        required: ['name', 'discount_type', 'discount_value', 'min_purchase', 'end_date'],
+        discount_value: { type: 'number', description: 'Valor del descuento (% o monto)' },
+        min_purchase: { type: 'number', description: 'Compra mínima para aplicar (0 si no hay mínimo)' },
+        end_date: { type: 'string', description: 'Fecha de fin en formato YYYY-MM-DD (obligatoria)' },
+        max_uses: { type: 'number', description: 'Número máximo de usos (opcional, omitir para ilimitado)' },
       },
+      required: ['name', 'discount_type', 'discount_value', 'min_purchase', 'end_date'],
     },
   },
   {
-    type: 'function' as const,
-    function: {
-      name: 'delete_promotion',
-      description: 'Elimina permanentemente una promoción. Úsala solo si el admin confirma que quiere borrarla.',
-      parameters: {
-        type: 'object',
-        properties: {
-          promotion_name: { type: 'string', description: 'Nombre exacto o parcial de la promoción a eliminar' },
-        },
-        required: ['promotion_name'],
+    name: 'delete_promotion',
+    description: 'Elimina permanentemente una promoción. Úsala solo si el admin confirma que quiere borrarla.',
+    parameters: {
+      type: 'object',
+      properties: {
+        promotion_name: { type: 'string', description: 'Nombre exacto o parcial de la promoción a eliminar' },
       },
+      required: ['promotion_name'],
     },
   },
   // ── PEDIDOS ──────────────────────────────────────────────────────────────────
   {
-    type: 'function' as const,
-    function: {
-      name: 'update_order_status',
-      description: 'Cambia el estado de un pedido. Úsalo para confirmar, marcar como preparando, completar o cancelar pedidos.',
-      parameters: {
-        type: 'object',
-        properties: {
-          order_identifier: {
-            type: 'string',
-            description: 'Número de pedido (ej: "001"), nombre del cliente, o "último" para el más reciente',
-          },
-          status: {
-            type: 'string',
-            enum: ['confirmed', 'preparing', 'completed', 'cancelled'],
-            description: 'Nuevo estado del pedido',
-          },
+    name: 'update_order_status',
+    description: 'Cambia el estado de un pedido. Úsalo para confirmar, marcar como preparando, completar o cancelar pedidos.',
+    parameters: {
+      type: 'object',
+      properties: {
+        order_identifier: {
+          type: 'string',
+          description: 'Número de pedido (ej: "001"), nombre del cliente, o "último" para el más reciente',
         },
-        required: ['order_identifier', 'status'],
+        status: {
+          type: 'string',
+          enum: ['confirmed', 'preparing', 'completed', 'cancelled'],
+          description: 'Nuevo estado del pedido',
+        },
       },
+      required: ['order_identifier', 'status'],
     },
   },
   // ── CONSULTAS ANALÍTICAS (solo lectura) ──────────────────────────────────────
   {
-    type: 'function' as const,
-    function: {
-      name: 'analyze_stock',
-      description: 'Consulta el estado completo e actualizado del inventario. Muestra qué ingredientes están sin stock, cuáles tienen stock bajo, y genera recomendaciones de reposición con cantidades.',
-      parameters: { type: 'object', properties: {} },
-    },
+    name: 'analyze_stock',
+    description: 'Consulta el estado completo e actualizado del inventario. Muestra qué ingredientes están sin stock, cuáles tienen stock bajo, y genera recomendaciones de reposición con cantidades.',
+    parameters: { type: 'object', properties: {} },
   },
   {
-    type: 'function' as const,
-    function: {
-      name: 'analyze_sales_period',
-      description: 'Analiza las ventas por producto, por hora del día y por día de la semana para un período. Úsalo cuando el admin pregunta qué se vende más, en qué horarios, qué día tiene más ventas.',
-      parameters: {
-        type: 'object',
-        properties: {
-          days: {
-            type: 'number',
-            description: 'Número de días a analizar hacia atrás (7, 14 o 30). Por defecto 7.',
-          },
+    name: 'analyze_sales_period',
+    description: 'Analiza las ventas por producto, por hora del día y por día de la semana para un período. Úsalo cuando el admin pregunta qué se vende más, en qué horarios, qué día tiene más ventas.',
+    parameters: {
+      type: 'object',
+      properties: {
+        days: {
+          type: 'number',
+          description: 'Número de días a analizar hacia atrás (7, 14 o 30). Por defecto 7.',
         },
-        required: [],
       },
+      required: [],
     },
   },
   {
-    type: 'function' as const,
-    function: {
-      name: 'get_active_orders',
-      description: 'Obtiene los pedidos activos actuales (pendientes y en preparación). Úsalo cuando el admin quiere ver qué pedidos hay ahora mismo o cuántos están en cola.',
-      parameters: { type: 'object', properties: {} },
-    },
+    name: 'get_active_orders',
+    description: 'Obtiene los pedidos activos actuales (pendientes y en preparación). Úsalo cuando el admin quiere ver qué pedidos hay ahora mismo o cuántos están en cola.',
+    parameters: { type: 'object', properties: {} },
   },
   {
-    type: 'function' as const,
-    function: {
-      name: 'get_product_detail',
-      description: 'Obtiene el detalle de ventas de un producto específico: unidades vendidas, ingresos totales, ticket promedio y su rendimiento en el período.',
-      parameters: {
-        type: 'object',
-        properties: {
-          product_name: { type: 'string', description: 'Nombre exacto o parcial del producto' },
-          days: { type: 'number', description: 'Días de histórico a analizar (por defecto 30)' },
-        },
-        required: ['product_name'],
+    name: 'get_product_detail',
+    description: 'Obtiene el detalle de ventas de un producto específico: unidades vendidas, ingresos totales, ticket promedio y su rendimiento en el período.',
+    parameters: {
+      type: 'object',
+      properties: {
+        product_name: { type: 'string', description: 'Nombre exacto o parcial del producto' },
+        days: { type: 'number', description: 'Días de histórico a analizar (por defecto 30)' },
       },
+      required: ['product_name'],
     },
   },
 ];
@@ -276,150 +234,152 @@ export async function POST(request: NextRequest) {
 
     const metrics = await getAdminMetrics();
 
-    if (process.env.OPENAI_API_KEY) {
-      try {
-        const OpenAI = (await import('openai')).default;
-        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-        const [ingredients, promotions, products, orders] = await Promise.all([
-          getIngredients(),
-          getAllPromotions(),
-          getAllProducts(),
-          getOrders(),
-        ]);
-
-        const systemContext = buildSystemContext(
-          metrics, ingredients || [], promotions || [], products || [], orders || []
-        );
-
-        const messages: any[] = [
-          { role: 'system', content: systemContext },
-          ...history.map(m => ({ role: m.role, content: m.content })),
-          { role: 'user', content: message },
-        ];
-
-        const response = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
-          messages,
-          tools: MAX_TOOLS,
-          tool_choice: 'auto',
-        });
-
-        const responseMessage = response.choices[0].message;
-        const actionResults: ActionResult[] = [];
-
-        if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
-          const toolMessages: any[] = [responseMessage];
-
-          for (const toolCall of responseMessage.tool_calls) {
-            const args = JSON.parse(toolCall.function.arguments);
-            let result: ActionResult;
-
-            try {
-              switch (toolCall.function.name) {
-                case 'update_ingredient_stock':
-                  result = await executeUpdateStock(args.ingredient_name, args.quantity, ingredients || []);
-                  break;
-                case 'toggle_ingredient_available':
-                  result = await executeToggleIngredient(args.ingredient_name, args.available, ingredients || []);
-                  break;
-                case 'toggle_product':
-                  result = await executeToggleProduct(args.product_name, args.active, products || []);
-                  break;
-                case 'set_product_featured':
-                  result = await executeSetFeatured(args.product_name, args.featured, products || []);
-                  break;
-                case 'update_product_price':
-                  result = await executeUpdatePrice(args.product_name, args.price, products || []);
-                  break;
-                case 'update_product_details':
-                  result = await executeUpdateProductDetails(args, products || []);
-                  break;
-                case 'toggle_promotion':
-                  result = await executeTogglePromotion(args.promotion_name, args.active, promotions || []);
-                  break;
-                case 'update_promotion_value':
-                  result = await executeUpdatePromotion(args, promotions || []);
-                  break;
-                case 'create_promotion':
-                  result = await executeCreatePromotion(args);
-                  break;
-                case 'delete_promotion':
-                  result = await executeDeletePromotion(args.promotion_name, promotions || []);
-                  break;
-                case 'update_order_status':
-                  result = await executeUpdateOrderStatus(args.order_identifier, args.status, orders || []);
-                  break;
-                case 'analyze_stock':
-                  result = await executeAnalyzeStock();
-                  break;
-                case 'analyze_sales_period':
-                  result = await executeAnalyzeSalesPeriod(args.days || 7);
-                  break;
-                case 'get_active_orders':
-                  result = await executeGetActiveOrders();
-                  break;
-                case 'get_product_detail':
-                  result = await executeGetProductDetail(args.product_name, args.days || 30, products || []);
-                  break;
-                default:
-                  result = { type: toolCall.function.name, description: 'Acción desconocida', success: false };
-              }
-            } catch (e: any) {
-              result = { type: toolCall.function.name, description: `Error: ${e.message}`, success: false };
-            }
-
-            actionResults.push(result);
-            toolMessages.push({
-              role: 'tool',
-              tool_call_id: toolCall.id,
-              content: result.description,
-            });
-          }
-
-          const finalResponse = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
-            messages: [...messages, ...toolMessages],
-          });
-
-          return NextResponse.json({
-            success: true,
-            message: finalResponse.choices[0].message.content || '',
-            actions: actionResults,
-            mock: false,
-          });
-        }
-
-        return NextResponse.json({
-          success: true,
-          message: responseMessage.content || '',
-          actions: [],
-          mock: false,
-        });
-
-      } catch (aiError: any) {
-        // Quota excedida o rate limit — fallback elegante sin 500
-        const isQuotaError = aiError?.status === 429 ||
-          aiError?.code === 'insufficient_quota' ||
-          aiError?.code === 'rate_limit_exceeded';
-
-        if (isQuotaError) {
-          console.warn('⚠️ OpenAI quota excedida — usando fallback');
-          const fallback = buildFallbackResponse(message, metrics);
-          return NextResponse.json({
-            success: true,
-            message: `⚠️ IA no disponible temporalmente (límite de cuota OpenAI). Respuesta básica:\n\n${fallback}`,
-            actions: [],
-            mock: true,
-            quotaError: true,
-          });
-        }
-        throw aiError; // Re-lanza errores no relacionados con quota
-      }
+    if (!process.env.GEMINI_API_KEY) {
+      const response = buildFallbackResponse(message, metrics);
+      return NextResponse.json({ 
+        success: true, 
+        message: `⚠️ GEMINI_API_KEY no configurada. Respuesta básica:\n\n${response}`, 
+        actions: [], 
+        mock: true 
+      });
     }
 
-    const response = buildFallbackResponse(message, metrics);
-    return NextResponse.json({ success: true, message: response, actions: [], mock: true });
+    try {
+      const [ingredients, promotions, products, orders] = await Promise.all([
+        getIngredients(),
+        getAllPromotions(),
+        getAllProducts(),
+        getOrders(),
+      ]);
+
+      const systemContext = buildSystemContext(
+        metrics, ingredients || [], promotions || [], products || [], orders || []
+      );
+
+      // Convertir historial a formato Gemini (user/model en lugar de user/assistant)
+      const geminiHistory = history.map(m => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }],
+      }));
+
+      // Crear modelo con herramientas
+      const model = genAI.getGenerativeModel({
+        model: 'gemini-2.0-flash-exp',
+        systemInstruction: systemContext,
+        tools: [{ functionDeclarations: MAX_TOOLS }],
+      });
+
+      const chat = model.startChat({
+        history: geminiHistory,
+      });
+
+      let result = await chat.sendMessage(message);
+      let response = result.response;
+      const actionResults: ActionResult[] = [];
+
+      // Procesar function calls si existen
+      let functionCall = response.functionCalls()?.[0];
+      
+      while (functionCall) {
+        const functionName = functionCall.name;
+        const args = functionCall.args;
+
+        console.log(`🔧 Max ejecutando: ${functionName}`, args);
+
+        let actionResult: ActionResult;
+
+        try {
+          switch (functionName) {
+            case 'update_ingredient_stock':
+              actionResult = await executeUpdateStock(args.ingredient_name, args.quantity, ingredients || []);
+              break;
+            case 'toggle_ingredient_available':
+              actionResult = await executeToggleIngredient(args.ingredient_name, args.available, ingredients || []);
+              break;
+            case 'toggle_product':
+              actionResult = await executeToggleProduct(args.product_name, args.active, products || []);
+              break;
+            case 'set_product_featured':
+              actionResult = await executeSetFeatured(args.product_name, args.featured, products || []);
+              break;
+            case 'update_product_price':
+              actionResult = await executeUpdatePrice(args.product_name, args.price, products || []);
+              break;
+            case 'update_product_details':
+              actionResult = await executeUpdateProductDetails(args, products || []);
+              break;
+            case 'toggle_promotion':
+              actionResult = await executeTogglePromotion(args.promotion_name, args.active, promotions || []);
+              break;
+            case 'update_promotion_value':
+              actionResult = await executeUpdatePromotion(args, promotions || []);
+              break;
+            case 'create_promotion':
+              actionResult = await executeCreatePromotion(args);
+              break;
+            case 'delete_promotion':
+              actionResult = await executeDeletePromotion(args.promotion_name, promotions || []);
+              break;
+            case 'update_order_status':
+              actionResult = await executeUpdateOrderStatus(args.order_identifier, args.status, orders || []);
+              break;
+            case 'analyze_stock':
+              actionResult = await executeAnalyzeStock();
+              break;
+            case 'analyze_sales_period':
+              actionResult = await executeAnalyzeSalesPeriod(args.days || 7);
+              break;
+            case 'get_active_orders':
+              actionResult = await executeGetActiveOrders();
+              break;
+            case 'get_product_detail':
+              actionResult = await executeGetProductDetail(args.product_name, args.days || 30, products || []);
+              break;
+            default:
+              actionResult = { type: functionName, description: 'Acción desconocida', success: false };
+          }
+        } catch (e: any) {
+          actionResult = { type: functionName, description: `Error: ${e.message}`, success: false };
+        }
+
+        actionResults.push(actionResult);
+
+        // Enviar resultado de la función de vuelta a Gemini
+        result = await chat.sendMessage([
+          {
+            functionResponse: {
+              name: functionName,
+              response: { result: actionResult.description },
+            },
+          },
+        ]);
+
+        response = result.response;
+        functionCall = response.functionCalls()?.[0];
+      }
+
+      // Obtener respuesta final de texto
+      const finalText = response.text();
+
+      return NextResponse.json({
+        success: true,
+        message: finalText,
+        actions: actionResults,
+        mock: false,
+      });
+
+    } catch (aiError: any) {
+      console.error('❌ Error Gemini:', aiError);
+      
+      const fallback = buildFallbackResponse(message, metrics);
+      return NextResponse.json({
+        success: true,
+        message: `⚠️ Error con Gemini. Respuesta básica:\n\n${fallback}`,
+        actions: [],
+        mock: true,
+        error: aiError.message,
+      });
+    }
 
   } catch (error: any) {
     console.error('❌ Admin chat error:', error);
@@ -784,7 +744,7 @@ PEDIDOS RECIENTES:
 ${recentOrdersList}`;
 }
 
-// ─── Fallback sin OpenAI ───────────────────────────────────────────────────────
+// ─── Fallback sin Gemini ─────────────────────────────────────────────────────
 function buildFallbackResponse(message: string, metrics: Awaited<ReturnType<typeof getAdminMetrics>>) {
   const msg = message.toLowerCase();
   const { salesByProduct, criticalStock, recentOrders, promotions } = metrics;
@@ -812,5 +772,5 @@ function buildFallbackResponse(message: string, metrics: Awaited<ReturnType<type
       ? `${promotions.length} promoción(es): ${(promotions as any[]).map(p => `${p.name} (${p.active ? 'activa' : 'inactiva'})`).join(', ')}.`
       : 'Sin promociones registradas.';
   }
-  return `Sin IA activa — puedo responder sobre ventas, stock o promociones. Para acciones necesitas OPENAI_API_KEY.`;
+  return `Sin IA activa — puedo responder sobre ventas, stock o promociones. Para acciones necesitas GEMINI_API_KEY configurada.`;
 }
