@@ -131,40 +131,64 @@ const shouldConfirmOrder = (message: string): boolean => {
 const getProductsByNames = async (productNames: string[]) => {
   if (productNames.length === 0) return [];
 
-  // Buscar TODOS los productos activos y filtrar por nombre (case-insensitive)
-  const { data: allProducts, error } = await supabase
-    .from('products')
-    .select('*')
-    .eq('active', true);
+  // 🔥 BUSCAR EN AMBAS TABLAS: products E ingredients
+  const [productsResult, ingredientsResult] = await Promise.all([
+    supabase.from('products').select('*').eq('active', true),
+    supabase.from('ingredients').select('*').eq('available', true).gt('stock_quantity', 0)
+  ]);
 
-  if (error) {
-    console.error('Error fetching products:', error);
-    return [];
+  if (productsResult.error) {
+    console.error('❌ Error fetching products:', productsResult.error);
+  }
+  if (ingredientsResult.error) {
+    console.error('❌ Error fetching ingredients:', ingredientsResult.error);
   }
 
-  const products = allProducts || [];
-  console.log('🗂️ TODOS los productos activos en BD:', products.map(p => p.name).join(', '));
+  const products = productsResult.data || [];
+  const ingredients = ingredientsResult.data || [];
+  
+  // Convertir ingredientes a formato compatible con productos
+  const ingredientsAsProducts = ingredients.map(ing => ({
+    id: ing.id,
+    name: ing.name,
+    base_price: ing.price || 1.99, // Precio por defecto si no tiene
+    description: `Ingrediente: ${ing.name}`,
+    active: ing.available,
+    category_id: null,
+    image_url: null,
+    priority_score: 50,
+    stock_quantity: ing.stock_quantity,
+    _source: 'ingredients' // Marcar origen para saber de dónde viene
+  }));
+
+  // Combinar ambas fuentes
+  const allItems = [...products, ...ingredientsAsProducts];
+  
+  console.log('🗂️ Productos en BD:', products.map(p => p.name).join(', '));
+  console.log('🥤 Ingredientes disponibles:', ingredients.map(i => i.name).join(', '));
+  console.log('📦 TOTAL items disponibles:', allItems.length);
   
   const lowerNames = productNames.map(n => n.toLowerCase().trim());
 
-  // Buscar con sistema de scoring inteligente
+  // Buscar con sistema de scoring inteligente en AMBAS fuentes
   const matched = lowerNames.map(searchName => {
-    // Calcular score para cada producto
-    const productsWithScore = products.map(p => ({
-      product: p,
-      score: calculateMatchScore(searchName, p.name)
+    // Calcular score para cada item (productos + ingredientes)
+    const itemsWithScore = allItems.map(item => ({
+      product: item,
+      score: calculateMatchScore(searchName, item.name)
     }));
 
     // Ordenar por score descendente
-    productsWithScore.sort((a, b) => b.score - a.score);
+    itemsWithScore.sort((a, b) => b.score - a.score);
 
     // Tomar el mejor match si tiene score > 0
-    const best = productsWithScore[0];
+    const best = itemsWithScore[0];
     if (best && best.score > 0) {
-      console.log(`✅ Match: "${searchName}" → "${best.product.name}" (score: ${best.score})`);
+      const source = best.product._source === 'ingredients' ? '[INGREDIENTE]' : '[PRODUCTO]';
+      console.log(`✅ Match: "${searchName}" → "${best.product.name}" ${source} (score: ${best.score})`);
       return best.product;
     } else {
-      console.log(`❌ Sin match para: "${searchName}" | Disponibles: ${products.map(p => p.name).slice(0, 5).join(', ')}...`);
+      console.log(`❌ Sin match para: "${searchName}" | Disponibles: ${allItems.map(p => p.name).slice(0, 5).join(', ')}...`);
       return null;
     }
   }).filter(Boolean);
@@ -281,10 +305,12 @@ const getEnhancedSystemPrompt = async (sessionId: string, userEmail?: string) =>
   // 🔥 Stock e ingredientes - SIN CACHE (siempre en tiempo real)
   let unavailableText = '';
   let lowStockText = '';
+  let ingredientsMenuText = '';
+  
   try {
     const { data: allIngredients } = await supabase
       .from('ingredients')
-      .select('name, stock_quantity, min_stock_alert, available')
+      .select('name, stock_quantity, min_stock_alert, available, price')
       .order('name');
     if (allIngredients && allIngredients.length > 0) {
       const unavailable = (allIngredients as any[]).filter(
@@ -293,11 +319,23 @@ const getEnhancedSystemPrompt = async (sessionId: string, userEmail?: string) =>
       const lowStock = (allIngredients as any[]).filter(
         (i: any) => i.available && i.stock_quantity > 0 && i.stock_quantity <= i.min_stock_alert
       );
+      const availableIngredients = (allIngredients as any[]).filter(
+        (i: any) => i.available && i.stock_quantity > i.min_stock_alert && i.price
+      );
+      
       if (unavailable.length > 0) {
         unavailableText = `\n\n❌ INGREDIENTES NO DISPONIBLES HOY (NO OFRECER NUNCA): ${unavailable.map((i: any) => i.name).join(', ')}`;
       }
       if (lowStock.length > 0) {
         lowStockText = `\n⚠️ STOCK LIMITADO (unidades exactas): ${lowStock.map((i: any) => `${i.name} (${i.stock_quantity} und.)`).join(', ')}`;
+      }
+      
+      // 🥤 Ingredientes que se pueden vender como productos individuales (ej: bebidas)
+      if (availableIngredients.length > 0) {
+        const sellableItems = availableIngredients.filter((i: any) => i.price && i.price > 0);
+        if (sellableItems.length > 0) {
+          ingredientsMenuText = `\n\n🛒 PRODUCTOS INDIVIDUALES DISPONIBLES:\n${sellableItems.map((i: any) => `- ${i.name} $${i.price.toFixed(2)}`).join('\n')}`;
+        }
       }
     }
   } catch (e) {
@@ -346,7 +384,7 @@ MENÚ COMPLETO:
 - Coca-Cola 500ml $1.99
 - Sprite 500ml $1.99
 - Fanta 500ml $1.99
-- Agua 500ml $0.99
+- Agua 500ml $0.99${ingredientsMenuText}
 
 🥫 Extras disponibles:
 - doble carne +$2.00
@@ -365,16 +403,19 @@ FORMATO DE MARCADORES (USA SOLO AL FINAL):
 ⚠️ DEBES usar el nombre EXACTO del producto tal como aparece en el MENÚ COMPLETO
 ⚠️ TÚ eres la IA - INTERPRETA lo que dice el cliente y busca en el menú
 ⚠️ NO uses tabla fija de traducción - PIENSA y busca en el menú dinámicamente
+⚠️ BUSCA EN TODO EL MENÚ: hamburguesas, combos, acompañamientos, bebidas Y productos individuales
 
 💡 CÓMO INTERPRETAR (100% IA - TÚ DECIDES):
 1. Cliente dice algo como "coca", "cocacola", "coca-cola"
-2. TÚ revisas el menú completo arriba
-3. TÚ ves que existe "Coca-Cola 500ml $1.99"
+2. TÚ revisas el menú completo arriba (INCLUYENDO productos individuales disponibles)
+3. TÚ ves que existe "Coca-Cola 500ml $1.99" (en bebidas O en productos individuales)
 4. TÚ escribes: [ADD_TO_CART:Coca-Cola 500ml:1:::]
 
-✅ SI HAY MÚLTIPLES OPCIONES:
-Cliente: "quiero coca"
-TÚ ves en menú: "Coca-Cola 500ml" y "Coca-Cola 1L" (ejemplo)
+🔍 IMPORTANTE - FUENTES DE BÚSQUEDA:
+- Busca PRIMERO en el menú principal (hamburguesas, combos, bebidas)
+- Si no encuentras, busca en "PRODUCTOS INDIVIDUALES DISPONIBLES"
+- El sistema buscará en productos E ingredientes automáticamente
+- TÚ solo usa el nombre exacto que veas en el menú
 TÚ preguntas: "¿Coca-Cola de 500ml ($1.99) o de 1 litro ($2.99)?"
 
 ✅ SI NO EXISTE:
@@ -565,13 +606,14 @@ IMPORTANTE: El carrito NO se abre hasta que el usuario quiera. La orden va DIREC
 const getBasicSystemPrompt = async () => {
   // 🔥 SIEMPRE consulta ingredientes en tiempo real (sin cache)
   let ingredientContext = '';
+  let ingredientsMenuText = '';
   // Mapa de stock para acceso rápido por nombre (en minúsculas)
   const stockMap: Record<string, number> = {};
 
   try {
     const { data: ingredients } = await supabase
       .from('ingredients')
-      .select('name, stock_quantity, min_stock_alert, available')
+      .select('name, stock_quantity, min_stock_alert, available, price')
       .order('name');
 
     if (ingredients && ingredients.length > 0) {
@@ -600,6 +642,12 @@ const getBasicSystemPrompt = async () => {
       if (available.length > 0) {
         ingredientContext += `\n✅ INGREDIENTES DISPONIBLES: ${available.map((i: any) => i.name).join(', ')}`;
       }
+      
+      // 🥤 Ingredientes que se pueden vender como productos individuales
+      const sellableItems = (ingredients as any[]).filter((i: any) => i.available && i.stock_quantity > 0 && i.price && i.price > 0);
+      if (sellableItems.length > 0) {
+        ingredientsMenuText = `\n\n🛒 PRODUCTOS INDIVIDUALES DISPONIBLES:\n${sellableItems.map((i: any) => `- ${i.name} $${i.price.toFixed(2)}`).join('\n')}`;
+      }
     }
   } catch (e) {
     console.warn('⚠️ No se pudo cargar stock de ingredientes:', e);
@@ -617,7 +665,7 @@ MENÚ:
 🥤 Coca-Cola 500ml $1.99
 🥤 Sprite 500ml $1.99
 🥤 Fanta 500ml $1.99
-🥤 Agua 500ml $0.99${ingredientContext}
+🥤 Agua 500ml $0.99${ingredientsMenuText}${ingredientContext}
 
 FLUJO:
 1. Usuario pide → confirmas
