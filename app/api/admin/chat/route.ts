@@ -302,6 +302,18 @@ const MAX_TOOLS = [
   },
   // ── INVENTARIO ───────────────────────────────────────────────────────────────
   {
+    name: 'update_product_stock',
+    description: 'Actualiza el stock (cantidad disponible) de un producto del menú. Úsalo cuando el admin quiera cambiar cuántas unidades quedan de una hamburguesa, combo, bebida u otro producto.',
+    parameters: {
+      type: 'object',
+      properties: {
+        product_name: { type: 'string', description: 'Nombre del producto (ej: "SmartBurger Clásica", "Coca-Cola 500ml")' },
+        quantity: { type: 'number', description: 'Nueva cantidad de stock del producto' },
+      },
+      required: ['product_name', 'quantity'],
+    },
+  },
+  {
     name: 'bulk_update_stock',
     description: 'Actualiza el stock de MÚLTIPLES ingredientes a la vez con una sola instrucción. Úsalo cuando el admin diga "llegó el pedido" o liste varios ingredientes de una vez.',
     parameters: {
@@ -408,6 +420,9 @@ export async function POST(request: NextRequest) {
               console.log('➡️  Ejecutando toggle_ingredient_available con:', args);
               actionResult = await executeToggleIngredient(args.ingredient_name, args.available);
               console.log('✅ Resultado:', actionResult);
+              break;
+            case 'update_product_stock':
+              result = await executeUpdateProductStock(toolArgs.product_name, toolArgs.quantity);
               break;
             case 'toggle_product':
               actionResult = await executeToggleProduct(args.product_name, args.active);
@@ -607,6 +622,20 @@ async function executeToggleIngredient(name: string, available: boolean): Promis
   };
 }
 
+async function executeUpdateProductStock(name: string, quantity: number): Promise<ActionResult> {
+  if (quantity < 0) return { type: 'update_product_stock', description: 'La cantidad no puede ser negativa', success: false };
+  const products = await getAllProducts();
+  const match = findByName(products || [], name);
+  if (!match) return { type: 'update_product_stock', description: `No encontré producto "${name}"`, success: false };
+  const oldQty = match.stock_quantity ?? 0;
+  await updateProduct(match.id, { stock_quantity: quantity });
+  return {
+    type: 'update_product_stock',
+    description: `Stock de "${match.name}" actualizado: ${oldQty} → ${quantity} unidades`,
+    success: true,
+  };
+}
+
 async function executeToggleProduct(name: string, active: boolean): Promise<ActionResult> {
   const products = await getAllProducts(); // 🔥 Query DB en tiempo real
   const match = findByName(products || [], name);
@@ -741,23 +770,38 @@ async function executeUpdateOrderStatus(identifier: string, status: string): Pro
 // ─── Ejecutores de consulta analítica (solo lectura) ─────────────────────────
 
 async function executeAnalyzeStock(): Promise<ActionResult> {
-  const [freshIngredients, freshAlerts] = await Promise.all([
+  const [freshIngredients, freshAlerts, freshProducts] = await Promise.all([
     getIngredients(),
     getInventoryAlerts(false),
+    getAllProducts(),
   ]);
 
-  const all = freshIngredients || [];
-  const outOfStock = all.filter(i => i.stock_quantity === 0 || !i.available);
-  const lowStock = all.filter(i => i.stock_quantity > 0 && i.stock_quantity <= i.min_stock_alert && i.available);
-  const ok = all.filter(i => i.stock_quantity > i.min_stock_alert && i.available);
+  // ─── INGREDIENTES ───────────────────────────────
+  const allIng = freshIngredients || [];
+  const ingOutOfStock = allIng.filter(i => i.stock_quantity === 0 || !i.available);
+  const ingLowStock = allIng.filter(i => i.stock_quantity > 0 && i.stock_quantity <= i.min_stock_alert && i.available);
+  const ingOk = allIng.filter(i => i.stock_quantity > i.min_stock_alert && i.available);
+
+  // ─── PRODUCTOS ──────────────────────────────────
+  const allProd = (freshProducts || []).filter(p => p.active);
+  const prodOutOfStock = (freshProducts || []).filter(p => (p.stock_quantity ?? 0) <= 0);
+  const prodLowStock = allProd.filter(p => (p.stock_quantity ?? 99) > 0 && (p.stock_quantity ?? 99) <= 5);
+  const prodOk = allProd.filter(p => (p.stock_quantity ?? 99) > 5);
 
   const lines: string[] = [
-    `Inventario actualizado (${all.length} ingredientes):`,
-    `⛔ Sin stock / no disponible: ${outOfStock.length}`,
-    ...outOfStock.map(i => `  • ${i.name}: ${i.stock_quantity} ${i.unit} — reponer mín ${i.min_stock_alert} ${i.unit}`),
-    `⚠️ Stock bajo: ${lowStock.length}`,
-    ...lowStock.map(i => `  • ${i.name}: ${i.stock_quantity}/${i.min_stock_alert} ${i.unit}`),
-    `✅ En orden: ${ok.length} ingredientes`,
+    `═══ STOCK DE PRODUCTOS (${(freshProducts || []).length} total) ═══`,
+    `⛔ Agotados / inactivos: ${prodOutOfStock.length}`,
+    ...prodOutOfStock.map(p => `  • ${p.name}: ${p.stock_quantity ?? 0} und${!p.active ? ' (inactivo)' : ''}`),
+    `⚠️ Stock bajo (≤5): ${prodLowStock.length}`,
+    ...prodLowStock.map(p => `  • ${p.name}: ${p.stock_quantity} und`),
+    `✅ Productos OK: ${prodOk.length}`,
+    ``,
+    `═══ STOCK DE INGREDIENTES (${allIng.length} total) ═══`,
+    `⛔ Sin stock / no disponible: ${ingOutOfStock.length}`,
+    ...ingOutOfStock.map(i => `  • ${i.name}: ${i.stock_quantity} ${i.unit} — reponer mín ${i.min_stock_alert} ${i.unit}`),
+    `⚠️ Stock bajo: ${ingLowStock.length}`,
+    ...ingLowStock.map(i => `  • ${i.name}: ${i.stock_quantity}/${i.min_stock_alert} ${i.unit}`),
+    `✅ En orden: ${ingOk.length} ingredientes`,
     freshAlerts && freshAlerts.length > 0 ? `Alertas activas: ${freshAlerts.length}` : 'Sin alertas sin resolver',
   ];
 
@@ -1062,8 +1106,8 @@ async function buildDynamicSystemContext(
     ? (promotions || []).map(p => `  - "${p.name}" (${p.active ? 'ACTIVA' : 'inactiva'}, ${p.discount_type} ${p.discount_value}, mín $${p.min_purchase})`).join('\n')
     : '  Sin promociones.';
 
-  const prodList = (products || []).slice(0, 15).map(p =>
-    `  - "${p.name}" $${p.base_price} (${p.active ? 'activo' : 'inactivo'}${p.featured ? ', destacado' : ''})`
+  const prodList = (products || []).map(p =>
+    `  - "${p.name}" $${p.base_price} (stock: ${p.stock_quantity ?? '?'} und, ${p.active ? 'activo' : 'INACTIVO'}${p.featured ? ', destacado' : ''}${(p.stock_quantity ?? 1) === 0 ? ' ⚠️ AGOTADO' : (p.stock_quantity ?? 99) <= 5 ? ' ⚠️ BAJO STOCK' : ''})`
   ).join('\n') || '  Sin productos.';
 
   const recentOrdersList = (orders || []).slice(0, 8).map(o =>
@@ -1103,6 +1147,7 @@ CAPACIDADES COMPLETAS:
   - Cambiar precio → update_product_price
   - Editar nombre, descripción, calorías, tiempo → update_product_details
   - Ver detalle y ventas de un producto → get_product_detail
+  - Actualizar stock (unidades disponibles) de un producto → update_product_stock
   - Crear nuevo producto → create_product
   - Eliminar producto → delete_product
 
@@ -1120,7 +1165,7 @@ CAPACIDADES COMPLETAS:
 📊 ANÁLISIS:
   - Análisis de ventas por período (7/14/30 días) → analyze_sales_period
   - Horas pico y días con más pedidos → analyze_sales_period
-  - Inventario crítico con recomendaciones → analyze_stock
+  - Inventario crítico de PRODUCTOS e INGREDIENTES con recomendaciones → analyze_stock
 
 DATOS DEL RESTAURANTE:
 
