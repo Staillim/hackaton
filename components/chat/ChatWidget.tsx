@@ -201,6 +201,21 @@ export default function ChatWidget() {
     try {
       console.log('🚀 Enviando request a /api/chat...');
       
+      // 🛒 Obtener estado actual del carrito para que María lo vea
+      const currentCart = useCartStore.getState().cart;
+      const cartInfo = currentCart.items.length > 0 ? {
+        items: currentCart.items.map(item => ({
+          name: item.product.name,
+          quantity: item.quantity,
+          price: item.product.base_price,
+          customizations: item.customizations
+        })),
+        itemCount: currentCart.items.length,
+        total: currentCart.total
+      } : null;
+      
+      console.log('🛒 Estado del carrito enviado a María:', cartInfo ? `${cartInfo.itemCount} items` : 'vacío');
+      
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -208,6 +223,7 @@ export default function ChatWidget() {
           messages: updatedMessages,
           sessionId: sessionId,
           userEmail: profile?.email || user?.email || undefined,
+          currentCart: cartInfo, // María puede ver el carrito del usuario
         }),
       });
 

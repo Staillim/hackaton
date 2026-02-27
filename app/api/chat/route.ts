@@ -224,11 +224,42 @@ const getProductsByNames = async (productNames: string[]) => {
   return unique as any[];
 };
 
-const getEnhancedSystemPrompt = async (sessionId: string, userEmail?: string) => {
+const getEnhancedSystemPrompt = async (sessionId: string, userEmail?: string, currentCart?: any) => {
   // 🚀 OPTIMIZACIÓN: En modo DEBUG, usar contexto reducido PERO con stock en tiempo real
   if (DEBUG_MODE) {
     console.log('🐛 DEBUG MODE: Usando prompt reducido con stock en tiempo real');
     return getBasicSystemPrompt();
+  }
+
+  // 🛒 CONTEXTO DEL CARRITO: Informar a María sobre lo que el usuario ya agregó
+  let cartContext = '';
+  if (currentCart && currentCart.itemCount > 0) {
+    const itemsList = currentCart.items.map((item: any) => {
+      let itemDesc = `${item.name} x${item.quantity}`;
+      if (item.customizations && (item.customizations.added?.length > 0 || item.customizations.removed?.length > 0)) {
+        const details = [];
+        if (item.customizations.added?.length > 0) details.push(`+${item.customizations.added.join(', ')}`);
+        if (item.customizations.removed?.length > 0) details.push(`-${item.customizations.removed.join(', ')}`);
+        itemDesc += ` (${details.join(' ')})`;
+      }
+      return itemDesc;
+    }).join('\n   - ');
+    
+    cartContext = `\n\n🛒 CARRITO ACTUAL DEL USUARIO (${currentCart.itemCount} items - Total: $${currentCart.total.toFixed(2)}):
+   - ${itemsList}
+
+💡 INSTRUCCIONES SOBRE EL CARRITO:
+- El usuario YA tiene estos productos en su carrito (agregados directamente, no por chat)
+- Si pide algo NUEVO: pregunta razonablemente si quiere conservar lo del carrito
+- Si pide algo DIFERENTE o dice "mejor dame...", es señal de que quiere cambiar
+- Si solo dice "dame X" sin contexto, pregunta: "¿Quieres agregar X a tu orden actual o prefieres empezar de nuevo?"
+- Si dice "solo eso" o "confirma", pregunta si quiere incluir lo que ya tiene en el carrito
+- Sé natural y razonable, no preguntes SIEMPRE sobre el carrito, solo cuando tenga sentido
+- Ejemplos de cuándo preguntar:
+  ✅ Usuario tiene hamburguesa, pide otra → "¿Quieres agregar otra burger a tu orden?"
+  ✅ Usuario tiene combo, pide papas solas → "Veo que tu combo ya incluye papas, ¿quieres papas extras?"
+  ✅ Usuario tiene items, dice "confirma" → "¿Incluyo también tu [items del carrito]?"
+  ❌ NO preguntar en cada mensaje, solo cuando sea relevante`;
   }
 
   // ⚡ CACHE: Obtener productos más vendidos (cache 10 min)
@@ -708,7 +739,7 @@ Tu mensaje aquí
 
 🔴🔴🔴 FIN RECORDATORIO 🔴🔴🔴
 
-${bestSellersText ? `⭐ Populares: ${bestSellersText}` : ''}${preferencesContext}${userContext}${timeContextText}${unavailableText}${lowStockText}
+${bestSellersText ? `⭐ Populares: ${bestSellersText}` : ''}${preferencesContext}${userContext}${timeContextText}${unavailableText}${lowStockText}${cartContext}
 
 IMPORTANTE: El carrito NO se abre hasta que el usuario quiera. La orden va DIRECTO a cocina con [CONFIRM_ORDER].`;
 };
@@ -825,10 +856,11 @@ export async function POST(request: NextRequest) {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   
   try {
-    const { messages, sessionId, userEmail } = await request.json();
+    const { messages, sessionId, userEmail, currentCart } = await request.json();
 
     console.log('📨 SessionID:', sessionId);
     console.log('👤 UserEmail:', userEmail || 'No proporcionado');
+    console.log('🛒 Carrito actual:', currentCart ? `${currentCart.itemCount} items ($${currentCart.total.toFixed(2)})` : 'vacío');
     console.log('📊 Total de mensajes recibidos:', messages?.length || 0);
     console.log('💬 Último mensaje del usuario:', messages?.[messages.length - 1]?.content?.substring(0, 100) || 'N/A');
 
@@ -855,8 +887,11 @@ export async function POST(request: NextRequest) {
 
     // Obtener el system prompt mejorado con contexto
     console.log('🔄 Obteniendo system prompt con contexto...');
-    const systemPrompt = await getEnhancedSystemPrompt(sessionId, userEmail);
+    const systemPrompt = await getEnhancedSystemPrompt(sessionId, userEmail, currentCart);
     console.log('✅ System prompt generado:', systemPrompt.substring(0, 150) + '...');
+    if (currentCart && currentCart.itemCount > 0) {
+      console.log('🛒 Contexto de carrito incluido en el prompt');
+    }
 
     // Lista de modelos a probar (en orden de prioridad)
     // Usando modelos verificados y disponibles en la API
