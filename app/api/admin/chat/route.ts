@@ -381,7 +381,7 @@ export async function POST(request: NextRequest) {
       // y añadirlos al system prompt para que Max mantenga el contexto
       const strippedLeadingMessages = firstUserIdx > 0 ? rawHistory.slice(0, firstUserIdx) : [];
       const priorContextAddendum = strippedLeadingMessages.length > 0
-        ? `\n\n---\nCONTEXTO PREVIO QUE YO (MAX) YA INFORMÉ AL ADMIN AL INICIO DE ESTA SESIÓN:\n${strippedLeadingMessages.map(m => m.parts[0].text).join('\n')}\n---\nTen en cuenta este contexto al interpretar los mensajes del admin que siguen.`
+        ? `\n\n---\nCONTEXTO PREVIO QUE YO (MAX) YA INFORMÉ AL ADMIN AL INICIO DE ESTA SESIÓN:\n${strippedLeadingMessages.map(m => m.parts[0].text).join('\n')}\n---\nEste contexto es CRÍTICO: si el admin responde con cantidades (ej: "50 unidades", "ya llegó el pedido") SIN especificar el artículo, infiere el artículo directamente de este contexto previo. Si el contexto menciona un PRODUCTO agotado, usa update_product_stock con ese producto. Si menciona un INGREDIENTE, usa update_ingredient_stock. NO preguntes de qué artículo se trata si ya está claro en el contexto.`
         : '';
 
       console.log('🤖 Iniciando chat con Gemini (gemini-2.5-pro)...');
@@ -1140,7 +1140,7 @@ IDENTIDAD:
 - Una vez ejecutada la acción, confirma brevemente el resultado.
 - Si algo no está en los datos, lo dices sin inventar.
 - Siempre en español.
-- IMPORTANTE: Si el admin dice "listo ya traje X unidades", "agregalas", "al faltante", etc., usa el CONTEXTO de la conversación anterior para saber a qué ingrediente se refiere.
+- IMPORTANTE: Si el admin dice "listo ya traje X unidades", "agregalas", "al faltante", etc., usa el CONTEXTO de la conversación anterior para saber a qué PRODUCTO o INGREDIENTE se refiere. Si en el contexto previo se mencionó un PRODUCTO (ej: Coca-Cola 500ml como producto agotado), usa update_product_stock. Si se mencionó un INGREDIENTE, usa update_ingredient_stock. NUNCA preguntes si ya está claro por el contexto.
 - Para acciones destructivas (eliminar producto), confirma brevemente antes de ejecutar si no lo ha confirmado ya.
 
 CAPACIDADES COMPLETAS:
