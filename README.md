@@ -188,12 +188,12 @@ analytics (standalone)
 
 ## 🤖 Capacidades del Chat IA
 
-El asistente inteligente puede:
+El asistente inteligente utiliza **Google Gemini API** para potenciar sus capacidades conversacionales y de recomendación. Puede:
 
 - ✅ Tomar pedidos en lenguaje natural
 - ✅ Personalizar hamburguesas ("sin cebolla", "doble carne")
 - ✅ Calcular precios con extras
-- ✅ Recomendar combos y ofertas
+- ✅ Recomendar combos y ofertas basadas en historial y preferencias
 - ✅ Responder preguntas sobre el menú
 - ✅ Sugerir adicionales (upselling)
 - ✅ Aplicar promociones automáticamente
@@ -206,7 +206,7 @@ IA: "¡Perfecto! Te recomiendo nuestra SmartBurger Clásica:
      - Sin cebolla ✓
      - + Bacon ($1.50)
      Precio total: $7.49
-     
+
      ¿Te gustaría agregar papas fritas? Tenemos una oferta..."
 ```
 
@@ -214,7 +214,7 @@ IA: "¡Perfecto! Te recomiendo nuestra SmartBurger Clásica:
 
 ## 📊 Panel Administrativo
 
-Accede a: `http://localhost:3000/admin`
+El panel administrativo también utiliza **Google Gemini API** para generar insights avanzados basados en métricas reales. Accede a: `http://localhost:3000/admin`
 
 ### Métricas Disponibles
 - 💰 Ventas del día
@@ -222,6 +222,14 @@ Accede a: `http://localhost:3000/admin`
 - 📈 Productos más vendidos
 - ⚠️ Alertas de inventario
 - 📊 Estadísticas en tiempo real
+
+**Ejemplo de insight generado:**
+```
+Max: "5 productos con stock crítico:
+      - Burger Clásica (5 unidades)
+      - Papas Fritas (2 unidades).
+      Considera reabastecer antes del pico de ventas."
+```
 
 ---
 
@@ -311,6 +319,45 @@ Desarrollado para hackathon de sistemas inteligentes
 - [Vercel](https://vercel.com/) - Deployment platform
 - [Tailwind CSS](https://tailwindcss.com/) - CSS framework
 - [Framer Motion](https://www.framer.com/motion/) - Animaciones
+
+---
+
+## 🏗️ Arquitectura de Software
+
+El sistema SmartBurger está diseñado con una arquitectura modular y escalable, utilizando tecnologías modernas para garantizar rendimiento y flexibilidad.
+
+### Componentes Principales
+
+1. **Frontend**
+   - **Framework**: Next.js (App Router)
+   - **Librerías**: React, Tailwind CSS, Framer Motion
+   - **Estado Global**: Zustand
+   - **Notificaciones**: React Hot Toast
+
+2. **Backend**
+   - **API**: Next.js API Routes
+   - **Base de Datos**: Supabase (PostgreSQL)
+   - **IA**: Google Gemini API para generación de texto y recomendaciones
+   - **ORM**: Supabase Client
+
+3. **DevOps**
+   - **Hosting**: Vercel para frontend y backend
+   - **Base de Datos**: Supabase (DBaaS)
+   - **Control de Versiones**: Git
+
+### Flujo de Datos
+
+1. **Interacción del Usuario**: Los usuarios interactúan con el sistema a través de la landing page o el chat inteligente.
+2. **Procesamiento**: Las solicitudes se procesan en el backend, donde se integran datos de la base de datos y respuestas generadas por la IA.
+3. **Respuesta**: El sistema devuelve respuestas personalizadas o actualiza el estado del cliente (carrito, historial, etc.).
+
+### Tecnologías Clave
+
+- **Frontend**: Next.js, React, Tailwind CSS, Zustand
+- **Backend**: Supabase, Google Gemini API
+- **DevOps**: Vercel, Git
+- **Base de Datos**: PostgreSQL con triggers y RLS
+- **IA**: Modelos de lenguaje grande (LLMs) para recomendaciones y análisis
 
 ---
 
