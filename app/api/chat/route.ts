@@ -381,19 +381,20 @@ const getEnhancedSystemPrompt = async (sessionId: string, userEmail?: string) =>
 
 CUANDO EL USUARIO CONFIRME SU PEDIDO FINAL, DEBES ESCRIBIR LOS MARCADORES ASÍ:
 
-[ADD_TO_CART:NombreProducto:Cantidad:Extras:Quitar:Notas]
-[ADD_TO_CART:NombreProducto:Cantidad:Extras:Quitar:Notas]
-[CONFIRM_ORDER]
+Ejemplo EXACTO para: "hamburguesa clasica con aros de cebolla y 2 cocacolas"
+Usuario dice: "no solo eso" o "eso es todo" o "confirma"
 
-SIN ESTOS MARCADORES, EL PEDIDO NO SE PROCESA. SON OBLIGATORIOS.
-
-Ejemplo usuario dice "no, eso es todo":
-TÚ DEBES ESCRIBIR:
+TÚ DEBES ESCRIBIR EXACTAMENTE ASÍ:
 [ADD_TO_CART:SmartBurger Clásica:1:::]
 [ADD_TO_CART:Aros de Cebolla:1:::]
 [ADD_TO_CART:Coca-Cola 500ml:2:::]
 [CONFIRM_ORDER]
 ¡Listo! Tu orden va a cocina 🎉
+
+⚠️ IMPORTANTE: 
+- CADA PRODUCTO = UN MARCADOR [ADD_TO_CART:...]
+- AL FINAL = SIEMPRE [CONFIRM_ORDER]
+- SIN [CONFIRM_ORDER] = LA ORDEN NO SE ENVÍA A COCINA
 
 🔴🔴🔴 FIN INSTRUCCIÓN CRÍTICA 🔴🔴🔴
 
@@ -560,7 +561,15 @@ Usuario: "no solo eso"
 Tú: "¡Perfecto! Tu orden va a cocina 🎉" ← SIN MARCADORES = ERROR FATAL
 Problema: Sin [ADD_TO_CART] y [CONFIRM_ORDER] el pedido NO se procesa
 
-✅✅ EJEMPLO CORRECTO:
+❌❌ OTRO EJEMPLO INCORRECTO (SOLO [ADD_TO_CART] SIN [CONFIRM_ORDER]):
+Usuario: "no solo eso"
+Tú: "[ADD_TO_CART:SmartBurger Clásica:1:::]
+[ADD_TO_CART:Aros de Cebolla:1:::]  
+[ADD_TO_CART:Coca-Cola 500ml:2:::]
+¡Listo! Tu orden va a cocina 🎉" ← FALTA [CONFIRM_ORDER] = ERROR
+Problema: Items se agregan al carrito pero NO se envían a cocina
+
+✅✅ EJEMPLO CORRECTO (CON [CONFIRM_ORDER] AL FINAL):
 Usuario: "no solo eso"
 Tú: "[ADD_TO_CART:SmartBurger Clásica:1:::]
 [ADD_TO_CART:Aros de Cebolla:1:::]
@@ -676,12 +685,27 @@ REGLAS OBLIGATORIAS:
 
 🔴🔴🔴 RECORDATORIO FINAL - MUY IMPORTANTE 🔴🔴🔴
 Cuando el usuario confirme (dice "confirma", "eso es todo", "solo eso", etc.):
-DEBES escribir los marcadores:
-[ADD_TO_CART:Producto:Cantidad:::]
-[ADD_TO_CART:Producto:Cantidad:::]
-[CONFIRM_ORDER]
 
-SIN estos marcadores el pedido NO se procesará.
+PASO 1: Escribe TODOS los [ADD_TO_CART:Producto:Cantidad:::] (uno por producto)
+PASO 2: Escribe [CONFIRM_ORDER] (OBLIGATORIO para enviar a cocina)
+PASO 3: Escribe tu mensaje de confirmación
+
+FORMATO OBLIGATORIO:
+[ADD_TO_CART:...]
+[ADD_TO_CART:...]
+[CONFIRM_ORDER]
+Tu mensaje aquí
+
+⚠️ SI NO ESCRIBES [CONFIRM_ORDER] ⚠️
+→ Los items se agregan al carrito ✓
+→ Pero NO se envían a cocina ✗
+→ Usuario dice: "no aparece nada en ordenes"
+
+✅ CON [CONFIRM_ORDER]:
+→ Items al carrito ✓
+→ Orden a cocina ✓  
+→ Usuario feliz ✓
+
 🔴🔴🔴 FIN RECORDATORIO 🔴🔴🔴
 
 ${bestSellersText ? `⭐ Populares: ${bestSellersText}` : ''}${preferencesContext}${userContext}${timeContextText}${unavailableText}${lowStockText}
@@ -1003,8 +1027,15 @@ María (responde de forma natural, cálida y conversacional, recordando TODO lo 
 
     // Detectar si se debe confirmar orden
     const confirmOrder = shouldConfirmOrder(responseMessage);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('🔍 RESPUESTA COMPLETA DE MARÍA:');
+    console.log(responseMessage);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     if (confirmOrder) {
-      console.log('✅ CONFIRMACIÓN DE ORDEN DETECTADA');
+      console.log('✅✅✅ CONFIRMACIÓN DE ORDEN DETECTADA [CONFIRM_ORDER]');
+    } else {
+      console.log('❌❌❌ NO SE DETECTÓ [CONFIRM_ORDER] en la respuesta');
+      console.log('⚠️ María debe escribir [CONFIRM_ORDER] después de los [ADD_TO_CART]');
     }
 
     // Limpiar respuesta (remover marcadores de carrito, confirmación y "María:")
