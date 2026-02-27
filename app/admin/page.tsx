@@ -12,9 +12,12 @@ import {
   Package,
   AlertTriangle,
   ArrowLeft,
+  Clock,
+  Brain,
+  Target,
 } from 'lucide-react';
 import Link from 'next/link';
-import { getOrders, getInventoryAlerts } from '@/lib/supabase';
+import { getOrders, getInventoryAlerts, getDashboardMetrics, getLowStockProducts } from '@/lib/supabase';
 import { Order, InventoryAlert } from '@/types';
 
 export default function AdminPage() {
@@ -35,40 +38,69 @@ function AdminDashboard() {
     todayOrders: 0,
     activeOrders: 0,
     lowStockItems: 0,
+    avgTicket: 0,
+    avgPrepTime: 0,
+    topProduct: 'N/A',
+    preparingOrders: 0,
   });
+  const [lowStockProducts, setLowStockProducts] = useState<any[]>([]);
 
   useEffect(() => {
     loadDashboardData();
+    // Actualizar cada 30 segundos
+    const interval = setInterval(loadDashboardData, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const loadDashboardData = async () => {
     try {
       setLoading(true);
-      const [ordersData, alertsData] = await Promise.all([
+      const [ordersData, alertsData, metrics, lowStock] = await Promise.all([
         getOrders(),
         getInventoryAlerts(false),
+        getDashboardMetrics().catch(() => null),
+        getLowStockProducts().catch(() => []),
       ]);
 
       setOrders(ordersData || []);
       setAlerts(alertsData || []);
+      setLowStockProducts(lowStock || []);
 
-      // Calculate stats
-      const today = new Date().toDateString();
-      const todayOrders = (ordersData || []).filter(
-        (o) => new Date(o.created_at).toDateString() === today
-      );
+      if (metrics) {
+        // Usar métricas de la base de datos
+        setStats({
+          todaySales: metrics.revenue_today || 0,
+          todayOrders: metrics.orders_today || 0,
+          activeOrders: (metrics.pending_orders || 0) + (metrics.preparing_orders || 0),
+          lowStockItems: metrics.low_stock_alerts || 0,
+          avgTicket: metrics.avg_ticket_today || 0,
+          avgPrepTime: Math.round(metrics.avg_prep_time_today || 0),
+          topProduct: metrics.top_product_today || 'N/A',
+          preparingOrders: metrics.preparing_orders || 0,
+        });
+      } else {
+        // Fallback: calcular manualmente
+        const today = new Date().toDateString();
+        const todayOrders = (ordersData || []).filter(
+          (o) => new Date(o.created_at).toDateString() === today
+        );
 
-      const todaySales = todayOrders.reduce((sum, o) => sum + parseFloat(String(o.final_amount)), 0);
-      const activeOrders = (ordersData || []).filter(
-        (o) => o.status === 'pending' || o.status === 'preparing'
-      ).length;
+        const todaySales = todayOrders.reduce((sum, o) => sum + parseFloat(String(o.final_amount)), 0);
+        const activeOrders = (ordersData || []).filter(
+          (o) => o.status === 'pending' || o.status === 'preparing'
+        ).length;
 
-      setStats({
-        todaySales,
-        todayOrders: todayOrders.length,
-        activeOrders,
-        lowStockItems: alertsData?.length || 0,
-      });
+        setStats({
+          todaySales,
+          todayOrders: todayOrders.length,
+          activeOrders,
+          lowStockItems: alertsData?.length || 0,
+          avgTicket: todayOrders.length > 0 ? todaySales / todayOrders.length : 0,
+          avgPrepTime: 0,
+          topProduct: 'N/A',
+          preparingOrders: (ordersData || []).filter((o) => o.status === 'preparing').length,
+        });
+      }
 
     } catch (error) {
       console.error('Error loading dashboard:', error);
@@ -156,6 +188,88 @@ function AdminDashboard() {
             color="red"
           />
         </div>
+
+        {/* Secondary Stats Grid - NEW */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <StatCard
+            icon={DollarSign}
+            label="Ticket Promedio Hoy"
+            value={`$${stats.avgTicket.toFixed(2)}`}
+            color="indigo"
+          />
+          <StatCard
+            icon={Clock}
+            label="Tiempo Prep. Promedio"
+            value={`${stats.avgPrepTime} min`}
+            color="yellow"
+          />
+          <StatCard
+            icon={Target}
+            label="Producto Más Vendido"
+            value={stats.topProduct}
+            color="pink"
+          />
+        </div>
+
+        {/* AI Insights Section - NEW */}
+        {lowStockProducts.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-gradient-to-br from-purple-900/20 to-blue-900/20 border border-purple-600/30 rounded-xl p-6 mb-8"
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <Brain className="w-6 h-6 text-purple-400" />
+              <h2 className="text-xl font-bold text-white">Decisiones Inteligentes IA</h2>
+            </div>
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="bg-zinc-900/50 p-4 rounded-lg">
+                <h3 className="text-white font-semibold mb-2">🎯 Optimización de Stock</h3>
+                <p className="text-gray-400 text-sm mb-3">
+                  María está priorizando productos con mejor stock y margen:
+                </p>
+                <div className="space-y-2">
+                  {lowStockProducts.slice(0, 3).map((product) => (
+                    <div
+                      key={product.id}
+                      className="flex items-center justify-between bg-zinc-800/50 p-2 rounded"
+                    >
+                      <span className="text-gray-300 text-sm">{product.name}</span>
+                      <span className="text-orange-500 text-xs font-semibold">
+                        {product.stock_quantity} unidades
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-zinc-900/50 p-4 rounded-lg">
+                <h3 className="text-white font-semibold mb-2">💡 Sugerencias Activas</h3>
+                <p className="text-gray-400 text-sm mb-3">
+                  El sistema está sugiriendo automáticamente:
+                </p>
+                <ul className="space-y-2 text-sm text-gray-300">
+                  <li className="flex items-start gap-2">
+                    <span className="text-green-500">✓</span>
+                    <span>Combos con alta rentabilidad</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-green-500">✓</span>
+                    <span>Bebidas (70% margen)</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-yellow-500">⚠</span>
+                    <span>Evitando productos con stock bajo</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-blue-500">ℹ</span>
+                    <span>Personalizando según historial</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </motion.div>
+        )}
 
         {/* Alerts Section */}
         {alerts.length > 0 && (

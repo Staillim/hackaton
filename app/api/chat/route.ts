@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { getBestSellingProducts, saveChatMessage, getChatHistory, getUserPreferences } from '@/lib/supabase';
+import { getBestSellingProducts, saveChatMessage, getChatHistory, getUserPreferences, analyzeUserPatterns, getSmartRecommendations, getCurrentTimeContext, getLowStockProducts } from '@/lib/supabase';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -72,7 +72,7 @@ const getProductsByNames = async (productNames: string[]) => {
   return products || [];
 };
 
-const getEnhancedSystemPrompt = async (sessionId: string) => {
+const getEnhancedSystemPrompt = async (sessionId: string, userEmail?: string) => {
   // Obtener productos más vendidos
   const bestSellers = await getBestSellingProducts(3).catch(() => []);
   const bestSellersText = bestSellers.map((item: any, i: number) => 
@@ -84,6 +84,37 @@ const getEnhancedSystemPrompt = async (sessionId: string) => {
   const preferencesText = preferences 
     ? `\nPreferencias: ${preferences.likes || '-'} | Alergias: ${preferences.allergies || 'ninguna'}`
     : '';
+
+  // Analizar comportamiento del usuario si tiene email
+  let userPatterns = null;
+  let userContext = '';
+  if (userEmail) {
+    userPatterns = await analyzeUserPatterns(userEmail).catch(() => null);
+    if (userPatterns && userPatterns.hasHistory) {
+      userContext = `\n\n🧠 ANÁLISIS DE COMPORTAMIENTO DEL USUARIO:
+- Órdenes previas: ${userPatterns.totalOrders}
+- Ticket promedio: $${userPatterns.averageOrderValue}
+- Productos favoritos: ${userPatterns.favoriteProducts.join(', ') || 'ninguno'}
+- Siempre quita: ${userPatterns.commonRemovals.join(', ') || 'nada'}
+- Siempre agrega: ${userPatterns.commonAdditions.join(', ') || 'nada'}
+- Hora preferida: ${userPatterns.preferredTime || 'no definida'}
+
+💡 USA ESTA INFO PARA:
+1. Sugerir sus productos favoritos
+2. Aplicar automáticamente sus customizaciones comunes
+3. Mencionar que "veo que siempre..." cuando sea relevante`;
+    }
+  }
+
+  // Obtener productos con stock bajo
+  const lowStockProducts = await getLowStockProducts().catch(() => []);
+  const lowStockText = lowStockProducts.length > 0
+    ? `\n\n⚠️ PRODUCTOS CON STOCK LIMITADO (no sugieras mucho):\n${lowStockProducts.map(p => `- ${p.name} (${p.stock_quantity} unidades)`).join('\n')}`
+    : '';
+
+  // Obtener contexto temporal
+  const timeContext = getCurrentTimeContext();
+  const timeContextText = `\n\n🕐 CONTEXTO ACTUAL: ${timeContext === 'morning' ? 'Mañana' : timeContext === 'afternoon' ? 'Tarde' : timeContext === 'evening' ? 'Noche' : 'Madrugada'}`;
 
   return `INSTRUCCIÓN CRÍTICA: Responde SIEMPRE en español. NUNCA agregues al carrito hasta que el usuario confirme TODO su pedido.
 
@@ -201,6 +232,15 @@ REGLAS OBLIGATORIAS:
 8. Al preguntar por bebidas o complementos, usa tono SUGERENTE, no obligatorio:
    ✅ CORRECTO: "¿Te gustaría Coca-Cola, Sprite o Fanta?" o "Tus combos incluyen bebida 🥤 ¿Te gustaría...?"
    ❌ INCORRECTO: "¿Qué bebida prefieres?" o "Necesito saber qué bebida quieres"
+9. 🧠 DECISIONES AUTÓNOMAS - EXPLICA TUS RAZONES:
+   Cuando sugieras algo, MENCIONA POR QUÉ:
+   ✅ "Veo que siempre pides sin cebolla, ¿quieres tu hamburguesa sin cebolla?"
+   ✅ "Este combo es similar a tu pedido habitual de $15"
+   ✅ "Recomiedo las Aros de Cebolla porque tienen stock limitado hoy"
+   ✅ "Es hora pico, este combo se prepara más rápido"
+   ✅ "Detecté que prefieres las tardes para ordenar, ¡bienvenido de vuelta!"
+
+${bestSellersText ? `⭐ Populares: ${bestSellersText}` : ''}${preferencesText}${userContext}${timeContextText}${lowStockText}
 
 IMPORTANTE: El carrito NO se abre hasta que el usuario quiera. La orden va DIRECTO a cocina con [CONFIRM_ORDER].`;
 };
@@ -211,9 +251,10 @@ export async function POST(request: NextRequest) {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   
   try {
-    const { messages, sessionId } = await request.json();
+    const { messages, sessionId, userEmail } = await request.json();
 
     console.log('📨 SessionID:', sessionId);
+    console.log('👤 UserEmail:', userEmail || 'No proporcionado');
     console.log('📊 Total de mensajes recibidos:', messages?.length || 0);
     console.log('💬 Último mensaje del usuario:', messages?.[messages.length - 1]?.content?.substring(0, 100) || 'N/A');
 
@@ -240,7 +281,7 @@ export async function POST(request: NextRequest) {
 
     // Obtener el system prompt mejorado con contexto
     console.log('🔄 Obteniendo system prompt con contexto...');
-    const systemPrompt = await getEnhancedSystemPrompt(sessionId);
+    const systemPrompt = await getEnhancedSystemPrompt(sessionId, userEmail);
     console.log('✅ System prompt generado:', systemPrompt.substring(0, 150) + '...');
 
     // Lista de modelos a probar (en orden de prioridad)

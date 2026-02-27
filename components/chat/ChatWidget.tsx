@@ -48,10 +48,8 @@ export default function ChatWidget() {
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
-  // Hook del carrito y auth
-  const addItem = useCartStore((state) => state.addItem);
-  const { cart, clearCart } = useCartStore();
   const { user, profile } = useAuth();
+  const { items, addItem, clearCart } = useCartStore();
 
   // Función para crear orden desde el chat
   const handleCreateOrderFromChat = async () => {
@@ -176,6 +174,7 @@ export default function ChatWidget() {
         body: JSON.stringify({
           messages: updatedMessages,
           sessionId: sessionId,
+          userEmail: profile?.email || user?.email || undefined,
         }),
       });
 
