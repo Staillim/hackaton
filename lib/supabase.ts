@@ -658,14 +658,27 @@ export const getIngredients = async () => {
 };
 
 export const updateIngredient = async (id: string, updates: { stock_quantity?: number; available?: boolean }) => {
-  const { data, error } = await supabase
-    .from('ingredients')
-    .update({ ...updates, updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
+  console.log(`🔄 [updateIngredient] Iniciando actualización:`, { id, updates });
+  
+  try {
+    const { data, error } = await supabase
+      .from('ingredients')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error) {
+      console.error(`❌ [updateIngredient] Error de Supabase:`, error);
+      throw error;
+    }
+    
+    console.log(`✅ [updateIngredient] Actualización exitosa:`, data);
+    return data;
+  } catch (error: any) {
+    console.error(`❌ [updateIngredient] Error en try-catch:`, error);
+    throw error;
+  }
 };
 
 export const getAllPromotions = async () => {

@@ -228,6 +228,10 @@ export async function POST(request: NextRequest) {
   try {
     const { message, history = [] }: { message: string; history: ChatMessage[] } = await request.json();
 
+    console.log('\n🎯 ========== ADMIN CHAT REQUEST ==========');
+    console.log('📝 Mensaje recibido:', message);
+    console.log('📚 Historial:', history.length, 'mensajes');
+
     if (!message?.trim()) {
       return NextResponse.json({ error: 'Mensaje vacío' }, { status: 400 });
     }
@@ -245,12 +249,14 @@ export async function POST(request: NextRequest) {
     }
 
     try {
+      console.log('🔍 Obteniendo datos frescos de DB...');
       const [ingredients, promotions, products, orders] = await Promise.all([
         getIngredients(),
         getAllPromotions(),
         getAllProducts(),
         getOrders(),
       ]);
+      console.log(`✅ Datos cargados: ${ingredients?.length} ingredientes, ${products?.length} productos, ${promotions?.length} promos, ${orders?.length} pedidos`);
 
       const systemContext = buildSystemContext(
         metrics, ingredients || [], promotions || [], products || [], orders || []
@@ -261,6 +267,8 @@ export async function POST(request: NextRequest) {
         role: m.role === 'assistant' ? 'model' : 'user',
         parts: [{ text: m.content }],
       }));
+
+      console.log('🤖 Iniciando chat con Gemini (gemini-2.5-pro)...');
 
       // Crear modelo con herramientas (usando modelo potente para function calling)
       const model = genAI.getGenerativeModel({
@@ -273,28 +281,40 @@ export async function POST(request: NextRequest) {
         history: geminiHistory,
       });
 
+      console.log('📤 Enviando mensaje a Gemini...');
       let result = await chat.sendMessage(message);
       let response = result.response;
+      console.log('📥 Respuesta recibida de Gemini');
       const actionResults: ActionResult[] = [];
 
       // Procesar function calls si existen
       let functionCall = response.functionCalls()?.[0];
       
+      if (functionCall) {
+        console.log('🔧 Gemini quiere ejecutar función:', functionCall.name);
+      } else {
+        console.log('💬 Gemini respondió solo con texto (sin función)');
+      }
+      
       while (functionCall) {
         const functionName = functionCall.name;
         const args = functionCall.args;
 
-        console.log(`🔧 Max ejecutando: ${functionName}`, args);
+        console.log(`🔧 Max ejecutando: ${functionName}`, JSON.stringify(args, null, 2));
 
         let actionResult: ActionResult;
 
         try {
           switch (functionName) {
             case 'update_ingredient_stock':
+              console.log('➡️  Ejecutando update_ingredient_stock con:', args);
               actionResult = await executeUpdateStock(args.ingredient_name, args.quantity, ingredients || []);
+              console.log('✅ Resultado:', actionResult);
               break;
             case 'toggle_ingredient_available':
+              console.log('➡️  Ejecutando toggle_ingredient_available con:', args);
               actionResult = await executeToggleIngredient(args.ingredient_name, args.available, ingredients || []);
+              console.log('✅ Resultado:', actionResult);
               break;
             case 'toggle_product':
               actionResult = await executeToggleProduct(args.product_name, args.active, products || []);
@@ -339,12 +359,15 @@ export async function POST(request: NextRequest) {
               actionResult = { type: functionName, description: 'Acción desconocida', success: false };
           }
         } catch (e: any) {
+          console.error('❌ Error ejecutando función:', e);
           actionResult = { type: functionName, description: `Error: ${e.message}`, success: false };
         }
 
         actionResults.push(actionResult);
+        console.log('📊 Acción agregada a resultados. Total:', actionResults.length);
 
         // Enviar resultado de la función de vuelta a Gemini
+        console.log('📤 Enviando resultado de función a Gemini...');
         result = await chat.sendMessage([
           {
             functionResponse: {
@@ -355,12 +378,39 @@ export async function POST(request: NextRequest) {
         ]);
 
         response = result.response;
+        console.log('📥 Nueva respuesta de Gemini recibida');
         functionCall = response.functionCalls()?.[0];
+        
+        if (functionCall) {
+          console.log('🔧 Gemini quiere ejecutar otra función:', functionCall.name);
+        } else {
+          console.log('✅ Gemini terminó de ejecutar funciones');
+        }
       }
 
-      // Obtener respuesta final de texto
-      const finalText = response.text();
+      // Obtener respuesta final de texto (con manejo de error)
+      console.log('📝 Intentando obtener respuesta de texto final...');
+      let finalText = '';
+      try {
+        finalText = response.text();
+        console.log('✅ Texto obtenido exitosamente:', finalText.substring(0, 100) + '...');
+      } catch (parseError: any) {
+        console.error('❌ Error al parsear respuesta final de Gemini:', parseError);
+        console.error('❌ Detalles del error:', parseError.message);
+        console.error('❌ Stack:', parseError.stack);
+        
+        // Si hay acciones ejecutadas, resumir el resultado
+        if (actionResults.length > 0) {
+          const lastAction = actionResults[actionResults.length - 1];
+          finalText = lastAction.description;
+          console.log('⚠️  Usando resultado de última acción como fallback:', finalText);
+        } else {
+          finalText = 'Acción completada.';
+          console.log('⚠️  Usando mensaje genérico como fallback');
+        }
+      }
 
+      console.log('🎉 ========== ADMIN CHAT SUCCESS ==========\n');
       return NextResponse.json({
         success: true,
         message: finalText,
@@ -393,10 +443,44 @@ export async function POST(request: NextRequest) {
 // ─── Ejecutores ───────────────────────────────────────────────────────────────
 
 async function executeUpdateStock(name: string, quantity: number, ingredients: any[]): Promise<ActionResult> {
+  console.log(`🔍 [executeUpdateStock] Buscando ingrediente: "${name}"`);
+  console.log(`📦 [executeUpdateStock] Cantidad a actualizar: ${quantity}`);
+  console.log(`📊 [executeUpdateStock] Total ingredientes disponibles: ${ingredients.length}`);
+  
   const match = findByName(ingredients, name);
-  if (!match) return { type: 'update_stock', description: `No encontré ingrediente "${name}"`, success: false };
-  await updateIngredient(match.id, { stock_quantity: quantity });
-  return { type: 'update_stock', description: `Stock de "${match.name}" actualizado a ${quantity} ${match.unit}`, success: true };
+  
+  if (!match) {
+    console.log(`❌ [executeUpdateStock] No se encontró ingrediente "${name}"`);
+    return { type: 'update_stock', description: `No encontré ingrediente "${name}"`, success: false };
+  }
+  
+  console.log(`✅ [executeUpdateStock] Ingrediente encontrado:`, {
+    id: match.id,
+    name: match.name,
+    stock_actual: match.stock_quantity,
+    unit: match.unit
+  });
+  
+  try {
+    console.log(`🔄 [executeUpdateStock] Llamando updateIngredient(${match.id}, { stock_quantity: ${quantity} })...`);
+    const result = await updateIngredient(match.id, { stock_quantity: quantity });
+    console.log(`✅ [executeUpdateStock] Base de datos actualizada exitosamente:`, result);
+    
+    return { 
+      type: 'update_stock', 
+      description: `Hecho. Stock de ${match.name} actualizado a ${quantity} ${match.unit}.`, 
+      success: true 
+    };
+  } catch (error: any) {
+    console.error(`❌ [executeUpdateStock] Error en base de datos:`, error);
+    console.error(`❌ [executeUpdateStock] Error message:`, error.message);
+    console.error(`❌ [executeUpdateStock] Error stack:`, error.stack);
+    return { 
+      type: 'update_stock', 
+      description: `Error al actualizar ${match.name}: ${error.message}`, 
+      success: false 
+    };
+  }
 }
 
 async function executeToggleIngredient(name: string, available: boolean, ingredients: any[]): Promise<ActionResult> {
@@ -709,9 +793,11 @@ function buildSystemContext(
 IDENTIDAD:
 - Directo, preciso, con datos. Sin relleno.
 - Cuando hay un problema lo dices primero.
-- Cuando el admin pide una acción, la ejecutas con tus herramientas y confirmas brevemente.
+- Cuando el admin pide una acción, SOLO usa las herramientas (functions), NO respondas con texto antes de ejecutar.
+- Una vez ejecutada la acción, confirma brevemente el resultado.
 - Si algo no está en los datos, lo dices sin inventar.
 - Siempre en español.
+- IMPORTANTE: Si el admin dice "listo ya traje X unidades", "agregalas", "al faltante", etc., usa el CONTEXTO de la conversación anterior para saber a qué ingrediente se refiere.
 
 CAPACIDADES:
 Ingredientes: actualizar stock, marcar disponible/no disponible
