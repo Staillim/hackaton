@@ -218,10 +218,12 @@ function CocinaDashboard() {
 
                 {/* Items */}
                 <div className="mb-4 space-y-3">
-                  {order.items?.map((item, idx) => (
+                  {order.items?.length === 0 || !order.items ? (
+                    <p className="text-gray-500 text-sm italic">Sin items registrados</p>
+                  ) : order.items?.map((item, idx) => (
                     <div key={idx} className="bg-zinc-800/50 rounded-lg p-3 border border-zinc-700">
                       <p className="text-white font-semibold">
-                        {item.quantity}x {item.product?.name || 'Producto'}
+                        {item.quantity}x {item.product?.name || (item as any).product_name || `Producto (${String((item as any).product_id || '').substring(0, 8)}...)`}
                       </p>
                       
                       {/* Customizaciones */}

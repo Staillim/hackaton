@@ -28,7 +28,7 @@ import {
   MessageCircle,
 } from 'lucide-react';
 import Link from 'next/link';
-import { getOrders, getInventoryAlerts, getYesterdaySales, supabase } from '@/lib/supabase';
+import { getOrders, getInventoryAlerts, getYesterdaySales, resolveAlert, supabase } from '@/lib/supabase';
 import { Order, InventoryAlert } from '@/types';
 import toast from 'react-hot-toast';
 
@@ -65,16 +65,43 @@ function AdminDashboard() {
   useEffect(() => {
     loadDashboardData();
 
-    // Supabase Realtime — actualiza stats cuando llega un pedido nuevo
-    const subscription = supabase
+    // Supabase Realtime — actualiza cuando llega un pedido nuevo
+    const ordersSubscription = supabase
       .channel('admin-orders-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
         loadDashboardData();
       })
       .subscribe();
 
+    // 🔥 Realtime — recarga alertas cuando cambia el stock de un ingrediente
+    const ingredientsSubscription = supabase
+      .channel('admin-ingredients-realtime')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'ingredients' }, () => {
+        // Recargar sólo las alertas para no matar todo el dashboard
+        getInventoryAlerts(false).then(alertsData => {
+          const fresh = alertsData || [];
+          setAlerts(fresh);
+          setStats(prev => ({ ...prev, lowStockItems: fresh.length }));
+        }).catch(console.error);
+      })
+      .subscribe();
+
+    // 🔥 Realtime — recarga alertas cuando cambia inventory_alerts
+    const alertsSubscription = supabase
+      .channel('admin-alerts-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_alerts' }, () => {
+        getInventoryAlerts(false).then(alertsData => {
+          const fresh = alertsData || [];
+          setAlerts(fresh);
+          setStats(prev => ({ ...prev, lowStockItems: fresh.length }));
+        }).catch(console.error);
+      })
+      .subscribe();
+
     return () => {
-      subscription.unsubscribe();
+      ordersSubscription.unsubscribe();
+      ingredientsSubscription.unsubscribe();
+      alertsSubscription.unsubscribe();
     };
   }, []);
 
@@ -288,15 +315,32 @@ function AdminDashboard() {
                   className="flex items-center justify-between bg-zinc-900/50 p-3 rounded-lg"
                 >
                   <span className="text-gray-300">{alert.message}</span>
-                  <span
-                    className={`text-xs font-semibold px-2 py-1 rounded-full ${
-                      alert.alert_type === 'out_of_stock'
-                        ? 'bg-red-600/20 text-red-400'
-                        : 'bg-yellow-600/20 text-yellow-400'
-                    }`}
-                  >
-                    {alert.alert_type === 'out_of_stock' ? 'Sin stock' : 'Stock bajo'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`text-xs font-semibold px-2 py-1 rounded-full ${
+                        alert.alert_type === 'out_of_stock'
+                          ? 'bg-red-600/20 text-red-400'
+                          : 'bg-yellow-600/20 text-yellow-400'
+                      }`}
+                    >
+                      {alert.alert_type === 'out_of_stock' ? 'Sin stock' : 'Stock bajo'}
+                    </span>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await resolveAlert(alert.id);
+                          setAlerts(prev => prev.filter(a => a.id !== alert.id));
+                          setStats(prev => ({ ...prev, lowStockItems: Math.max(0, prev.lowStockItems - 1) }));
+                        } catch (e) {
+                          console.error('Error resolviendo alerta:', e);
+                        }
+                      }}
+                      className="p-1 text-gray-500 hover:text-white hover:bg-zinc-700 rounded transition-colors"
+                      title="Marcar como resuelta"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

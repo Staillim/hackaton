@@ -49,7 +49,7 @@ export default function ChatWidget() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   const { user, profile } = useAuth();
-  const { items, addItem, clearCart } = useCartStore();
+  const { cart, addItem, clearCart } = useCartStore();
 
   // Función para crear orden desde el chat
   const handleCreateOrderFromChat = async () => {
@@ -64,6 +64,9 @@ export default function ChatWidget() {
     }
 
     try {
+      console.log('🎯 [Chat] Iniciando creación de orden desde chat');
+      console.log('📋 [Chat] Items en carrito:', cart.items.length);
+
       // Crear la orden
       const orderData = {
         customer_name: profile?.full_name || user.email,
@@ -77,7 +80,9 @@ export default function ChatWidget() {
         notes: 'Orden creada desde el chat',
       };
 
+      console.log('📝 [Chat] Creando orden principal...');
       const order = await createOrder(orderData);
+      console.log('✅ [Chat] Orden creada:', order.order_number);
 
       // Crear los items de la orden
       const orderItems = cart.items.map(item => ({
@@ -93,7 +98,9 @@ export default function ChatWidget() {
         },
       }));
 
-      await createOrderItems(orderItems);
+      console.log('📦 [Chat] Guardando items de la orden...');
+      const savedItems = await createOrderItems(orderItems);
+      console.log('✅ [Chat] Items guardados:', savedItems?.length || 0);
 
       toast.success(`🎉 ¡Orden #${order.order_number} confirmada y enviada a cocina!`, {
         duration: 5000,
@@ -102,9 +109,19 @@ export default function ChatWidget() {
       
       clearCart();
 
-    } catch (error) {
-      console.error('Error creating order from chat:', error);
-      toast.error('Error al confirmar la orden');
+    } catch (error: any) {
+      console.error('❌ [Chat] Error completo:', error);
+      const errorMessage = error?.message || 'Error desconocido';
+      
+      if (errorMessage.includes('RLS')) {
+        toast.error('⚠️ Error de permisos en la base de datos. Contacta al administrador.', {
+          duration: 8000,
+        });
+      } else {
+        toast.error(`Error al confirmar la orden: ${errorMessage}`, {
+          duration: 6000,
+        });
+      }
     }
   };
 

@@ -76,12 +76,32 @@ export const createOrder = async (orderData: any) => {
 };
 
 export const createOrderItems = async (items: any[]) => {
+  console.log('📦 [createOrderItems] Intentando insertar items:', {
+    count: items.length,
+    items: items.map(i => ({
+      product_id: i.product_id,
+      quantity: i.quantity,
+      customizations: i.customizations
+    }))
+  });
+
   const { data, error } = await supabase
     .from('order_items')
     .insert(items)
     .select();
 
-  if (error) throw error;
+  if (error) {
+    console.error('❌ [createOrderItems] Error al insertar:', {
+      error,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code
+    });
+    throw new Error(`Error al guardar los items de la orden: ${error.message}. CAUSA PROBABLE: RLS bloqueando INSERT en order_items.`);
+  }
+
+  console.log('✅ [createOrderItems] Items insertados exitosamente:', data?.length || 0);
   return data;
 };
 
@@ -101,6 +121,40 @@ export const getOrders = async (status?: string) => {
 };
 
 export const getInventoryAlerts = async (resolved?: boolean) => {
+  // 🔥 PASO 1: Resolver alertas obsoletas donde el stock ya fue repuesto
+  // Usamos un JOIN directo en la query de update
+  if (resolved === false || resolved === undefined) {
+    try {
+      // Traer todas las alertas activas con su ingrediente actual
+      const { data: activeAlerts } = await supabase
+        .from('inventory_alerts')
+        .select('id, ingredient_id, ingredient:ingredients(stock_quantity, min_stock_alert)')
+        .eq('resolved', false);
+
+      if (activeAlerts && activeAlerts.length > 0) {
+        const toResolve = activeAlerts
+          .filter((a: any) => {
+            if (!a.ingredient) return false;
+            const stock = a.ingredient.stock_quantity ?? 0;
+            const minAlert = a.ingredient.min_stock_alert ?? 10;
+            return stock > minAlert;
+          })
+          .map((a: any) => a.id);
+
+        if (toResolve.length > 0) {
+          console.log(`🔔 [getInventoryAlerts] Resolviendo ${toResolve.length} alerta(s) obsoletas...`);
+          await supabase
+            .from('inventory_alerts')
+            .update({ resolved: true, resolved_at: new Date().toISOString() })
+            .in('id', toResolve);
+        }
+      }
+    } catch (e) {
+      console.error('[getInventoryAlerts] Error auto-resolviendo alertas:', e);
+    }
+  }
+
+  // PASO 2: Traer las alertas (ya limpias)
   let query = supabase
     .from('inventory_alerts')
     .select('*, ingredient:ingredients(*)')

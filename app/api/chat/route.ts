@@ -71,23 +71,44 @@ const shouldConfirmOrder = (message: string): boolean => {
 const getProductsByNames = async (productNames: string[]) => {
   if (productNames.length === 0) return [];
 
-  const { data: products, error } = await supabase
+  // Buscar TODOS los productos activos y filtrar por nombre (case-insensitive)
+  const { data: allProducts, error } = await supabase
     .from('products')
     .select('*')
-    .in('name', productNames);
+    .eq('active', true);
 
   if (error) {
     console.error('Error fetching products:', error);
     return [];
   }
 
-  return products || [];
+  const products = allProducts || [];
+  const lowerNames = productNames.map(n => n.toLowerCase().trim());
+
+  // Buscar coincidencia exacta primero, luego parcial (case-insensitive)
+  const matched = lowerNames.map(searchName => {
+    // Coincidencia exacta
+    let found = products.find(p => p.name.toLowerCase().trim() === searchName);
+    if (!found) {
+      // Coincidencia parcial (el nombre del producto está CONTENIDO en lo que María escribió o viceversa)
+      found = products.find(
+        p => p.name.toLowerCase().includes(searchName) || searchName.includes(p.name.toLowerCase())
+      );
+    }
+    if (found) console.log(`✅ Match: "${searchName}" → "${found.name}"`);
+    else console.log(`❌ Sin match para: "${searchName}"`);
+    return found;
+  }).filter(Boolean);
+
+  // Retornar únicos
+  const unique = matched.filter((p, idx, arr) => arr.findIndex(x => x!.id === p!.id) === idx);
+  return unique as any[];
 };
 
 const getEnhancedSystemPrompt = async (sessionId: string, userEmail?: string) => {
-  // 🚀 OPTIMIZACIÓN: En modo DEBUG, usar contexto mínimo
+  // 🚀 OPTIMIZACIÓN: En modo DEBUG, usar contexto reducido PERO con stock en tiempo real
   if (DEBUG_MODE) {
-    console.log('🐛 DEBUG MODE: Usando prompt reducido (ahorra ~70% tokens)');
+    console.log('🐛 DEBUG MODE: Usando prompt reducido con stock en tiempo real');
     return getBasicSystemPrompt();
   }
 
@@ -149,15 +170,31 @@ const getEnhancedSystemPrompt = async (sessionId: string, userEmail?: string) =>
     }
   }
 
-  // ⚡ CACHE: Stock bajo (cache 15 min)
-  let lowStockProducts = cache.get<any[]>('lowStock');
-  if (!lowStockProducts) {
-    lowStockProducts = await getLowStockProducts().catch(() => []);
-    cache.set('lowStock', lowStockProducts, 15);
+  // 🔥 Stock e ingredientes - SIN CACHE (siempre en tiempo real)
+  let unavailableText = '';
+  let lowStockText = '';
+  try {
+    const { data: allIngredients } = await supabase
+      .from('ingredients')
+      .select('name, stock_quantity, min_stock_alert, available')
+      .order('name');
+    if (allIngredients && allIngredients.length > 0) {
+      const unavailable = (allIngredients as any[]).filter(
+        (i: any) => !i.available || i.stock_quantity <= 0
+      );
+      const lowStock = (allIngredients as any[]).filter(
+        (i: any) => i.available && i.stock_quantity > 0 && i.stock_quantity <= i.min_stock_alert
+      );
+      if (unavailable.length > 0) {
+        unavailableText = `\n\n❌ INGREDIENTES NO DISPONIBLES HOY (NO OFRECER NUNCA): ${unavailable.map((i: any) => i.name).join(', ')}`;
+      }
+      if (lowStock.length > 0) {
+        lowStockText = `\n⚠️ STOCK LIMITADO (unidades exactas): ${lowStock.map((i: any) => `${i.name} (${i.stock_quantity} und.)`).join(', ')}`;
+      }
+    }
+  } catch (e) {
+    console.warn('⚠️ No se pudo cargar stock:', e);
   }
-  const lowStockText = lowStockProducts.length > 0
-    ? `\n\n⚠️ STOCK LIMITADO: ${lowStockProducts.slice(0, 3).map(p => p.name).join(', ')}`
-    : '';
 
   // Contexto temporal (sin cache, es rápido)
   const timeContext = getCurrentTimeContext();
@@ -286,14 +323,70 @@ REGLAS OBLIGATORIAS:
    ✅ "Recomiedo las Aros de Cebolla porque tienen stock limitado hoy"
    ✅ "Es hora pico, este combo se prepara más rápido"
    ✅ "Detecté que prefieres las tardes para ordenar, ¡bienvenido de vuelta!"
+10. INGREDIENTES NO DISPONIBLES (❌):
+    - NUNCA los ofrezcas ni los menciones como opción.
+    - Si el cliente los pide, informa que hoy no están disponibles y sugiere alternativa.
+    - NO te disculpes por pedidos ANTERIORES que fueron válidos cuando se hicieron. Solo informa la disponibilidad ACTUAL.
+11. STOCK LIMITADO (⚠️ con unidades exactas):
+    - Verifica si las unidades alcanzan para lo que pide el cliente.
+    - Si pide MÁS de lo que hay: dile exactamente cuántas quedan y pregunta si acepta esa cantidad.
+      ✅ Ejemplo: "Solo contamos con 1 aguacate disponible, no podemos cubrir las 2 adiciones. ¿Quieres agregar solo 1 aguacate y completar con otro ingrediente?"
+12. PERSONALIZACIONES LÓGICAS:
+    - NUNCA permitas remover el ingrediente principal de un plato. Es físicamente imposible.
+      ❌ "Aros de cebolla sin cebolla" → RECHAZA educadamente.
+      ❌ "Hamburguesa sin carne" → RECHAZA educadamente.
+      ✅ Explica que ese ingrediente es esencial y ofrece un plato diferente si lo necesita.
+      ✅ Ejemplo: "Los aros de cebolla tienen la cebolla como protagonista, ¡no podrían existir sin ella! 😅 ¿Quizás prefieres unas Papas Fritas?"
 
-${bestSellersText ? `⭐ Populares: ${bestSellersText}` : ''}${preferencesText}${userContext}${timeContextText}${lowStockText}
+${bestSellersText ? `⭐ Populares: ${bestSellersText}` : ''}${preferencesText}${userContext}${timeContextText}${unavailableText}${lowStockText}
 
 IMPORTANTE: El carrito NO se abre hasta que el usuario quiera. La orden va DIRECTO a cocina con [CONFIRM_ORDER].`;
 };
 
-// 🐛 Prompt básico para modo DEBUG (reduce tokens ~70%)
-const getBasicSystemPrompt = () => {
+// 🐛 Prompt básico para modo DEBUG (reduce tokens ~70%) - con ingredientes en tiempo real
+const getBasicSystemPrompt = async () => {
+  // 🔥 SIEMPRE consulta ingredientes en tiempo real (sin cache)
+  let ingredientContext = '';
+  // Mapa de stock para acceso rápido por nombre (en minúsculas)
+  const stockMap: Record<string, number> = {};
+
+  try {
+    const { data: ingredients } = await supabase
+      .from('ingredients')
+      .select('name, stock_quantity, min_stock_alert, available')
+      .order('name');
+
+    if (ingredients && ingredients.length > 0) {
+      // Construir mapa de stock
+      for (const i of ingredients as any[]) {
+        stockMap[i.name.toLowerCase()] = i.stock_quantity;
+      }
+
+      const unavailable = (ingredients as any[]).filter(
+        (i: any) => !i.available || i.stock_quantity <= 0
+      );
+      const lowStock = (ingredients as any[]).filter(
+        (i: any) => i.available && i.stock_quantity > 0 && i.stock_quantity <= i.min_stock_alert
+      );
+      const available = (ingredients as any[]).filter(
+        (i: any) => i.available && i.stock_quantity > i.min_stock_alert
+      );
+
+      if (unavailable.length > 0) {
+        ingredientContext += `\n\n❌ INGREDIENTES NO DISPONIBLES HOY (NO OFRECER NUNCA): ${unavailable.map((i: any) => i.name).join(', ')}`;
+      }
+      if (lowStock.length > 0) {
+        // Mostrar cantidad exacta para que sepa si puede cubrir el pedido
+        ingredientContext += `\n⚠️ STOCK LIMITADO (unidades exactas disponibles): ${lowStock.map((i: any) => `${i.name} (${i.stock_quantity} und.)`).join(', ')}`;
+      }
+      if (available.length > 0) {
+        ingredientContext += `\n✅ INGREDIENTES DISPONIBLES: ${available.map((i: any) => i.name).join(', ')}`;
+      }
+    }
+  } catch (e) {
+    console.warn('⚠️ No se pudo cargar stock de ingredientes:', e);
+  }
+
   return `Eres María de SmartBurger. Habla en español, tono amigable.
 
 MENÚ:
@@ -304,7 +397,7 @@ MENÚ:
 🍟 Papas Fritas $2.99
 🧅 Aros de Cebolla $3.49
 🥤 Coca-Cola, Sprite, Fanta $1.99
-🥤 Agua $0.99
+🥤 Agua $0.99${ingredientContext}
 
 FLUJO:
 1. Usuario pide → confirmas
@@ -315,7 +408,31 @@ FLUJO:
 Formato: [ADD_TO_CART:Nombre:Cantidad:Extras:Quitar:Notas]
 Ejemplo: "[ADD_TO_CART:Combo SmartBurger:1:::][CONFIRM_ORDER] ¡Listo! Tu orden va a cocina 🎉"
 
-NUNCA agregues al carrito hasta que confirmen. Usa emojis 🍔🥤🍟`;
+REGLAS CRÍTICAS - LEE CON ATENCIÓN:
+
+1. NUNCA agregues al carrito hasta que el cliente confirme. Usa emojis 🍔🥤🍟
+
+2. INGREDIENTES NO DISPONIBLES (❌):
+   - Si un ingrediente está en ❌, NUNCA lo ofrezcas ni lo menciones como opción.
+   - Si el cliente lo pide, dile claramente que hoy no está disponible y sugiere alternativa.
+   - ⚠️ NO te disculpes por pedidos ANTERIORES que fueron válidos cuando se hicieron. Cada pedido es independiente. Solo informa sobre la disponibilidad ACTUAL para el pedido NUEVO.
+
+3. STOCK LIMITADO (⚠️ con unidades exactas):
+   - Verifica si las unidades disponibles alcanzan para lo que pide el cliente.
+   - Si pide MÁS unidades de las que hay: dile exactamente cuántas quedan y pregunta si acepta esa cantidad.
+     ✅ Ejemplo: "Solo contamos con 1 aguacate disponible, no podemos cubrir las 2 adiciones. ¿Quieres agregar solo 1 aguacate y complementar con otro ingrediente?"
+   - Si pide igual o menos que el stock: procede normalmente.
+
+4. PERSONALIZACIONES LÓGICAS:
+   - NUNCA permitas remover el ingrediente principal de un plato. Es ilógico e imposible.
+     ❌ INCORRECTO: "Aros de cebolla sin cebolla" → RECHAZA esto.
+     ❌ INCORRECTO: "Hamburguesa sin carne" → RECHAZA esto.
+   - Si el cliente pide algo así, explícale amablemente que ese ingrediente es esencial para el plato y ofrece un plato diferente si quiere evitarlo.
+     ✅ Ejemplo: "Los aros de cebolla tienen la cebolla como ingrediente principal, ¡no pueden existir sin ella! 😅 Si no quieres cebolla, ¿te puedo recomendar las Papas Fritas?"
+
+5. HISTORIAL DE PEDIDOS:
+   - No hagas comentarios sobre pedidos anteriores del cliente a menos que él lo mencione.
+   - Si un ingrediente estaba disponible en un pedido anterior y ya no lo está, simplemente informa la situación actual sin apologías por el pasado.`;
 };
 
 export async function POST(request: NextRequest) {
@@ -544,7 +661,11 @@ María (responde de forma natural, cálida y conversacional, recordando TODO lo 
       }
       
       productsToAdd = cartActions.map(action => {
-        const product = products.find(p => p.name === action.product);
+        // Buscar por nombre exacto primero, luego case-insensitive
+        const actionNameLower = action.product.toLowerCase().trim();
+        const product = products.find(p => p.name === action.product)
+          || products.find(p => p.name.toLowerCase().trim() === actionNameLower)
+          || products.find(p => p.name.toLowerCase().includes(actionNameLower) || actionNameLower.includes(p.name.toLowerCase()));
         if (!product) {
           console.log(`❌ Producto NO encontrado: "${action.product}"`);
           return null;
