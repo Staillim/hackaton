@@ -577,6 +577,8 @@ function MaxChatSection({
   // Ref para detectar si el alert_count sube durante la sesión
   const prevCriticalRef = useRef<number | null>(null);
   const sessionStartRef = useRef<number>(Date.now());
+  // Seguimiento del último estado de alertas conocido (para detectar mejoras)
+  const lastAlertTotalRef = useRef<number | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -586,12 +588,50 @@ function MaxChatSection({
     scrollToBottom();
   }, [messages]);
 
+  // ── Función reutilizable para verificar alertas ──────────────────────────────
+  const recheckAlerts = async (injectUpdate = false) => {
+    try {
+      const res = await fetch('/api/admin/alerts');
+      const data = await res.json();
+      const newTotal = data.hasAlerts
+        ? (data.critical?.prodAgotados ?? 0) + (data.critical?.prodBajos ?? 0) +
+          (data.critical?.ingAgotados ?? 0) + (data.critical?.ingBajos ?? 0)
+        : 0;
+
+      if (injectUpdate && lastAlertTotalRef.current !== null) {
+        const prev = lastAlertTotalRef.current;
+        if (prev > 0 && newTotal === 0) {
+          // Todo resuelto
+          setMessages(msgs => [
+            ...msgs,
+            { role: 'assistant' as const, content: '✅ ¡Perfecto! Revisé el inventario nuevamente y ya no hay artículos agotados ni con stock crítico. Todo en orden.', timestamp: new Date() },
+          ]);
+        } else if (prev > 0 && newTotal < prev) {
+          // Mejoró parcialmente
+          setMessages(msgs => [
+            ...msgs,
+            { role: 'assistant' as const, content: data.message, timestamp: new Date() },
+          ]);
+        }
+      }
+
+      lastAlertTotalRef.current = newTotal;
+    } catch {
+      // silencioso
+    }
+  };
+
   // ── Alerta proactiva al montar ──────────────────────────────────────────────
   useEffect(() => {
     const checkAlerts = async () => {
       try {
         const res = await fetch('/api/admin/alerts');
         const data = await res.json();
+        const total = data.hasAlerts
+          ? (data.critical?.prodAgotados ?? 0) + (data.critical?.prodBajos ?? 0) +
+            (data.critical?.ingAgotados ?? 0) + (data.critical?.ingBajos ?? 0)
+          : 0;
+        lastAlertTotalRef.current = total;
         if (data.hasAlerts && data.message) {
           setMessages([
             {
@@ -607,7 +647,9 @@ function MaxChatSection({
     };
     // Pequeño delay para que el componente esté visible antes del primer mensaje
     const t = setTimeout(checkAlerts, 800);
-    return () => clearTimeout(t);
+    // Polling cada 90s para mantener las alertas actualizadas durante la sesión
+    const interval = setInterval(() => recheckAlerts(false), 90_000);
+    return () => { clearTimeout(t); clearInterval(interval); };
   }, []); // solo al montar
 
   // ── Alerta reactiva: cuando algo nuevo se agota durante la sesión ───────────
@@ -664,6 +706,10 @@ function MaxChatSection({
           quotaError: data.quotaError,
         };
         setMessages(prev => [...prev, assistantMsg]);
+        // Si Max realizó alguna acción (update de stock, etc.), re-verificar alertas después de 2s
+        if (data.actions && data.actions.length > 0) {
+          setTimeout(() => recheckAlerts(true), 2000);
+        }
         if (data.quotaError) {
           toast('Cuota de OpenAI excedida — Max responde en modo básico', {
             icon: '⚠️',
