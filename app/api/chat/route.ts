@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { getBestSellingProducts, saveChatMessage, getChatHistory, getUserPreferences, analyzeUserPatterns, getSmartRecommendations, getCurrentTimeContext, getLowStockProducts, getUserProfile } from '@/lib/supabase';
+import { getBestSellingProducts, saveChatMessage, getChatHistory, getUserPreferences, analyzeUserPatterns, getSmartRecommendations, getCurrentTimeContext, getLowStockProducts, getUserProfile, saveExplicitLike } from '@/lib/supabase';
 import { createClient } from '@supabase/supabase-js';
 import { cache } from '@/lib/cache';
+import { detectExplicitLikes, formatPreferencesForPrompt } from '@/lib/detect-preferences';
 
 // 💰 MODO DEBUG: Reduce contexto para testing (ahorra 70% de tokens)
 const DEBUG_MODE = process.env.ENABLE_FULL_CONTEXT !== 'true';
@@ -133,19 +134,64 @@ const getEnhancedSystemPrompt = async (sessionId: string, userEmail?: string) =>
     `${i + 1}. ${item.product?.name} ($${item.product?.base_price})`
   ).join(', ');
 
-  // ⚡ CACHE: Preferencias del usuario (cache 5 min)
-  let preferences: any = cache.get(`preferences_${sessionId}`);
-  if (!preferences) {
-    preferences = await getUserPreferences(sessionId).catch(() => null);
-    if (preferences) {
-      cache.set(`preferences_${sessionId}`, preferences, 5);
+  // ⚡ CACHE: Preferencias avanzadas del usuario (sistema nuevo - cache 5 min)
+  let userPreferences: any = null;
+  let preferencesContext = '';
+  
+  if (userEmail) {
+    userPreferences = cache.get(`user_preferences_${userEmail}`);
+    if (!userPreferences) {
+      userPreferences = await getUserPreferences(userEmail).catch(() => null);
+      if (userPreferences) {
+        cache.set(`user_preferences_${userEmail}`, userPreferences, 5);
+      }
+    }
+    
+    // Construir contexto de preferencias si existe
+    if (userPreferences && userPreferences.total_orders > 0) {
+      const favProducts = userPreferences.favorite_products || [];
+      const alwaysAdds = userPreferences.always_adds || [];
+      const alwaysRemoves = userPreferences.always_removes || [];
+      const neverOrders = userPreferences.never_orders || [];
+      
+      let preferencesText = '\n\n🎯 PREFERENCIAS AVANZADAS DEL USUARIO:\n';
+      
+      if (favProducts.length > 0) {
+        preferencesText += `📊 Productos favoritos: ${favProducts.map((p: any) => `${p.name} (${p.percentage}%)`).join(', ')}\n`;
+      }
+      
+      if (alwaysAdds.length > 0) {
+        preferencesText += `➕ Siempre agrega: ${alwaysAdds.map((a: any) => a.ingredient).join(', ')}\n`;
+      }
+      
+      if (alwaysRemoves.length > 0) {
+        preferencesText += `➖ Siempre quita: ${alwaysRemoves.map((r: any) => r.ingredient).join(', ')}\n`;
+      }
+      
+      if (neverOrders.length > 0) {
+        preferencesText += `🚫 Nunca pide: ${neverOrders.join(', ')}\n`;
+      }
+      
+      if (userPreferences.preferred_time_of_day) {
+        preferencesText += `⏰ Horario preferido: ${userPreferences.preferred_time_of_day}\n`;
+      }
+      
+      if (userPreferences.preferred_days_of_week && userPreferences.preferred_days_of_week.length > 0) {
+        preferencesText += `📅 Días favoritos: ${userPreferences.preferred_days_of_week.join(', ')}\n`;
+      }
+      
+      preferencesText += `\n💡 NIVEL DE CONFIANZA: ${userPreferences.confidence_level} (${userPreferences.total_orders} pedidos)\n`;
+      preferencesText += `\n🎁 USA ESTAS PREFERENCIAS PARA:\n`;
+      preferencesText += `1. Ofrecer automáticamente sus productos favoritos\n`;
+      preferencesText += `2. Preparar customizaciones por defecto (agregar/quitar ingredientes)\n`;
+      preferencesText += `3. EVITAR sugerir productos que nunca pide\n`;
+      preferencesText += `4. Personalizar según horario y día de la semana`;
+      
+      preferencesContext = preferencesText;
     }
   }
-  const preferencesText = preferences 
-    ? `\nPreferencias: ${preferences.likes || '-'} | Alergias: ${preferences.allergies || 'ninguna'}`
-    : '';
 
-  // ⚡ CACHE: Análisis de comportamiento (cache 5 min) - Sistema de perfil persistente
+  // ⚡ CACHE: Análisis de comportamiento básico (sistema viejo - cache 5 min)
   let userProfile: any = null;
   let userContext = '';
   if (userEmail) {
@@ -166,18 +212,12 @@ const getEnhancedSystemPrompt = async (sessionId: string, userEmail?: string) =>
         ? userProfile.always_orders.join(', ') 
         : 'Nada especial';
       
-      userContext = `\n\n👤 PERFIL DEL USUARIO:
+      userContext = `\n\n👤 PERFIL BÁSICO DEL USUARIO:
 - Promedio de gasto: $${userProfile.average_order_value}
 - Día favorito: ${userProfile.favorite_day || 'No definido'}
 - Hora favorita: ${userProfile.favorite_time || 'No definida'}
 - Nunca pide: ${neverOrders}
-- Siempre pide: ${alwaysOrders}
-
-💡 USA ESTE PERFIL PARA:
-1. Sugerir productos en su rango de gasto
-2. Mencionar "veo que no te gusta ${neverOrders}" cuando sea relevante
-3. Ofrecer automáticamente "${alwaysOrders}" en sus pedidos
-4. Personalizar recomendaciones según sus gustos`;
+- Siempre pide: ${alwaysOrders}`;
     }
   }
 
@@ -246,26 +286,60 @@ MENÚ COMPLETO:
 - queso extra +$0.75
 - salsa BBQ, mostaza, ketchup
 
-${bestSellersText ? `⭐ Populares: ${bestSellersText}` : ''}${preferencesText}
+${bestSellersText ? `⭐ Populares: ${bestSellersText}` : ''}${preferencesContext}
 
 FORMATO DE MARCADORES (USA SOLO AL FINAL):
 [ADD_TO_CART:NombreProducto:Cantidad:Extras:Quitar:Notas]
 [CONFIRM_ORDER]
 
 ⚠️ IMPORTANTE SOBRE MARCADORES:
-- NombreProducto: Nombre EXACTO del producto (sin bebidas ni extras del combo)
+- NombreProducto: Nombre EXACTO del producto del menú
 - Cantidad: Número
-- Extras: SOLO ingredientes ADICIONALES (Aguacate, Queso extra, Bacon). NO incluyas bebidas
+- Extras: SOLO ingredientes ADICIONALES pagados (Aguacate, Queso extra, Bacon)
 - Quitar: Ingredientes a remover (Cebolla, Tomate)
 - Notas: Comentarios especiales del cliente
-- ❌ NUNCA pongas "Bebida: X" en Extras o Notas - las bebidas YA vienen con el combo
+
+🔴 REGLAS DE PRODUCTOS:
+1. COMBOS: NO agregues la bebida como item separado (ya viene incluida)
+   ✅ Correcto: [ADD_TO_CART:Combo Deluxe:1:::]
+   ❌ Incorrecto: [ADD_TO_CART:Combo Deluxe:1:::] + [ADD_TO_CART:Coca-Cola:1:::]
+
+2. BEBIDAS SUELTAS: SÍ agrégalas si el usuario las pide SIN combo
+   ✅ Correcto: [ADD_TO_CART:Doble Queso Deluxe:1:::]
+                [ADD_TO_CART:Coca-Cola:1:::]
+   
+3. CADA PRODUCTO = UN MARCADOR
+   Usuario pide: "aros de cebolla, hamburguesa y coca-cola"
+   ✅ Correcto: 
+   [ADD_TO_CART:Aros de Cebolla:1:::]
+   [ADD_TO_CART:Doble Queso Deluxe:1:::]
+   [ADD_TO_CART:Coca-Cola:1:::]
+
+DETECCIÓN DE PREFERENCIAS (PARA REDUCIR COSTOS DE API):
+Cuando el usuario diga "me gusta mucho X", "me encanta X", "siempre pido X":
+- Anótalo mentalmente para las siguientes interacciones
+- Sistema lo guardará automáticamente en BD
+- Próxima vez que visite, sugiere ese producto primero
 
 Ejemplo CORRECTO:
-[ADD_TO_CART:Combo Deluxe:1:Aguacate::] ← Solo el extra (aguacate), bebida no se menciona
-[ADD_TO_CART:Hamburguesa Clásica:1::Cebolla:Sin salsas] ← Sin cebolla, nota especial
+Usuario: "quiero aros de cebolla y una doble queso con coca-cola, me gusta mucho la coca-cola"
+Tú: "¡Perfecto! 🍔🧅🥤
+• Aros de Cebolla - $3.49
+• Doble Queso Deluxe - $8.99  
+• Coca-Cola - $1.99
+Total: $14.47
+
+¡Anotado que te encanta la Coca-Cola! 😊 ¿Algo más?"
+
+Usuario: "no, eso es todo"
+Tú: "[ADD_TO_CART:Aros de Cebolla:1:::]
+[ADD_TO_CART:Doble Queso Deluxe:1:::]
+[ADD_TO_CART:Coca-Cola:1:::]
+[CONFIRM_ORDER]
+¡Listo! Tu orden va directo a cocina 🎉"
 
 Ejemplo INCORRECTO:
-❌ [ADD_TO_CART:Combo Deluxe:1:Aguacate:Bebida: Fanta:] ← NO incluir bebida
+❌ [ADD_TO_CART:Combo Deluxe:1:Aguacate:Bebida: Fanta:] ← NO incluir "Bebida:" en marcadores
 
 FLUJO CORRECTO (EJEMPLOS):
 
@@ -364,7 +438,7 @@ REGLAS OBLIGATORIAS:
       ✅ Explica que ese ingrediente es esencial y ofrece un plato diferente si lo necesita.
       ✅ Ejemplo: "Los aros de cebolla tienen la cebolla como protagonista, ¡no podrían existir sin ella! 😅 ¿Quizás prefieres unas Papas Fritas?"
 
-${bestSellersText ? `⭐ Populares: ${bestSellersText}` : ''}${preferencesText}${userContext}${timeContextText}${unavailableText}${lowStockText}
+${bestSellersText ? `⭐ Populares: ${bestSellersText}` : ''}${preferencesContext}${userContext}${timeContextText}${unavailableText}${lowStockText}
 
 IMPORTANTE: El carrito NO se abre hasta que el usuario quiera. La orden va DIRECTO a cocina con [CONFIRM_ORDER].`;
 };
@@ -548,8 +622,27 @@ export async function POST(request: NextRequest) {
     console.log('📝 Historial de conversación:', conversationHistory.length, 'caracteres');
     console.log('💭 Último mensaje:', lastUserMessage);
 
+    // 🎯 DETECTAR GUSTOS EXPLÍCITOS (para reducir costos de API)
+    const detectedPreferences = detectExplicitLikes(lastUserMessage);
+    console.log('🎯 Preferencias detectadas:', detectedPreferences);
+    
+    // Guardar en BD si el usuario tiene email y se detectó algo
+    if (userEmail && detectedPreferences.length > 0) {
+      for (const pref of detectedPreferences) {
+        try {
+          await saveExplicitLike(userEmail, pref.item, pref.context);
+          console.log(`✅ Gusto guardado: "${pref.item}" (${pref.confidence})`);
+        } catch (error) {
+          console.error('❌ Error guardando gusto:', error);
+        }
+      }
+    }
+    
+    // Formatear preferencias detectadas para el prompt
+    const justMentionedContext = formatPreferencesForPrompt(detectedPreferences);
+
     // Crear el prompt con todo el contexto
-    const fullPrompt = `${systemPrompt}
+    const fullPrompt = `${systemPrompt}${justMentionedContext}
 
 HISTORIAL DE LA CONVERSACIÓN:
 ${conversationHistory}

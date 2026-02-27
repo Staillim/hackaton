@@ -319,17 +319,89 @@ export const saveUserPreference = async (sessionId: string, preferences: any) =>
   if (error) console.error('Preference save error:', error);
 };
 
-export const getUserPreferences = async (sessionId: string) => {
-  const { data, error } = await supabase
-    .from('analytics')
-    .select('event_data')
-    .eq('session_id', sessionId)
-    .eq('event_type', 'user_preference')
-    .order('created_at', { ascending: false })
-    .limit(1);
+export const getUserPreferences = async (userEmail: string) => {
+  try {
+    console.log('📊 [getUserPreferences] Obteniendo preferencias para:', userEmail);
+    
+    // Intentar obtener de la tabla user_preferences (nuevo sistema)
+    const { data, error } = await supabase
+      .from('user_preferences')
+      .select('*')
+      .eq('user_email', userEmail)
+      .single();
 
-  if (error || !data || data.length === 0) return null;
-  return data[0].event_data;
+    if (error) {
+      // Si la tabla no existe o no hay datos, intentar analizar ahora
+      console.log('⚠️ [getUserPreferences] No hay preferencias, analizando historial...');
+      
+      // Llamar a la función SQL para analizar
+      const { data: analyzed, error: analyzeError } = await supabase
+        .rpc('analyze_user_preferences', { p_user_email: userEmail });
+      
+      if (analyzeError) {
+        console.error('❌ [getUserPreferences] Error analizando:', analyzeError);
+        return null;
+      }
+      
+      console.log('✅ [getUserPreferences] Análisis completado:', analyzed);
+      
+      // Intentar obtener de nuevo
+      const { data: retryData, error: retryError } = await supabase
+        .from('user_preferences')
+        .select('*')
+        .eq('user_email', userEmail)
+        .single();
+      
+      if (retryError) {
+        console.error('❌ [getUserPreferences] Error después de analizar:', retryError);
+        return null;
+      }
+      
+      return retryData;
+    }
+
+    console.log('✅ [getUserPreferences] Preferencias encontradas:', {
+      total_orders: data.total_orders,
+      confidence_level: data.confidence_level,
+      has_favorites: data.favorite_products?.length > 0,
+      has_removals: data.always_removes?.length > 0,
+      has_additions: data.always_adds?.length > 0
+    });
+
+    return data;
+  } catch (error) {
+    console.error('❌ [getUserPreferences] Error general:', error);
+    return null;
+  }
+};
+
+// Guardar gusto explícito del usuario (mencionado en conversación)
+export const saveExplicitLike = async (
+  userEmail: string,
+  itemName: string,
+  context?: string
+) => {
+  try {
+    console.log(`💾 [saveExplicitLike] Guardando: "${itemName}" para ${userEmail}`);
+    
+    const { data, error } = await supabase
+      .rpc('save_explicit_like', {
+        p_user_email: userEmail,
+        p_item_name: itemName,
+        p_context: context || null
+      });
+
+    if (error) {
+      console.error('❌ [saveExplicitLike] Error:', error);
+      throw error;
+    }
+
+    console.log('✅ [saveExplicitLike] Guardado exitoso:', data);
+    return data;
+  } catch (error) {
+    console.error('❌ [saveExplicitLike] Error general:', error);
+    throw error;
+  }
 };
 
 // Obtener órdenes de un usuario específico
