@@ -401,7 +401,44 @@ const getEnhancedSystemPrompt = async (sessionId: string, userEmail?: string, cu
       }
     }
   } catch (e) {
-    console.warn('⚠️ No se pudo cargar stock:', e);
+    console.warn('⚠️ No se pudo cargar stock de ingredientes:', e);
+  }
+
+  // 🔥 Stock de PRODUCTOS - SIN CACHE (siempre en tiempo real)
+  let productsOutOfStockText = '';
+  let productsLowStockText = '';
+  let productsAvailableText = '';
+
+  try {
+    const { data: allProducts } = await supabase
+      .from('products')
+      .select('name, stock_quantity, active')
+      .order('name');
+    if (allProducts && allProducts.length > 0) {
+      const outOfStock = (allProducts as any[]).filter(
+        (p: any) => !p.active || p.stock_quantity <= 0
+      );
+      const lowStock = (allProducts as any[]).filter(
+        (p: any) => p.active && p.stock_quantity > 0 && p.stock_quantity <= 5
+      );
+      const available = (allProducts as any[]).filter(
+        (p: any) => p.active && p.stock_quantity > 5
+      );
+
+      if (outOfStock.length > 0) {
+        productsOutOfStockText = `\n\n❌ PRODUCTOS AGOTADOS HOY (NO OFRECER NUNCA): ${outOfStock.map((p: any) => p.name).join(', ')}`;
+      }
+      if (lowStock.length > 0) {
+        productsLowStockText = `\n⚠️ PRODUCTOS CON STOCK LIMITADO: ${lowStock.map((p: any) => `${p.name} (${p.stock_quantity} und.)`).join(', ')}`;
+      }
+      if (available.length > 0) {
+        productsAvailableText = `\n✅ PRODUCTOS DISPONIBLES: ${available.map((p: any) => `${p.name} (${p.stock_quantity} und.)`).join(', ')}`;
+      }
+
+      console.log('📦 Stock de productos cargado:', allProducts.length, 'productos');
+    }
+  } catch (e) {
+    console.warn('⚠️ No se pudo cargar stock de productos:', e);
   }
 
   // Contexto temporal (sin cache, es rápido)
@@ -739,7 +776,18 @@ Tu mensaje aquí
 
 🔴🔴🔴 FIN RECORDATORIO 🔴🔴🔴
 
-${bestSellersText ? `⭐ Populares: ${bestSellersText}` : ''}${preferencesContext}${userContext}${timeContextText}${unavailableText}${lowStockText}${cartContext}
+${bestSellersText ? `⭐ Populares: ${bestSellersText}` : ''}${preferencesContext}${userContext}${timeContextText}
+
+📊 ESTADO DE INVENTARIO EN TIEMPO REAL:
+═══════════════════════════════════════════════${productsOutOfStockText}${productsLowStockText}${productsAvailableText}${unavailableText}${lowStockText}
+
+⚠️ REGLAS DE STOCK (LÉELAS SIEMPRE ANTES DE RESPONDER):
+1. Si un PRODUCTO está en ❌ AGOTADO: NO lo ofrezcas. Di: "Hoy no tenemos [X] 😢 ¿Te puedo ofrecer [alternativa]?"
+2. Si un PRODUCTO está en ⚠️ STOCK LIMITADO y el cliente lo pide: Avísale PROACTIVAMENTE: "Quedan solo [X] unidades de [producto], ¿lo agrego?"
+3. Si el cliente pide MÁS unidades de las disponibles: "Solo nos quedan [X] [producto], ¿quieres esas [X] o prefieres menos?"
+4. Si un INGREDIENTE está en ❌ NO DISPONIBLE: NO lo ofrezcas como extra ni personalización.
+5. Si un INGREDIENTE está en ⚠️ STOCK LIMITADO: Avisa si solicitan más del stock disponible.
+6. PROACTIVO: Si algo tiene stock ≤5, menciona la limitación ANTES de que el cliente confirme.${cartContext}
 
 IMPORTANTE: El carrito NO se abre hasta que el usuario quiera. La orden va DIRECTO a cocina con [CONFIRM_ORDER].`;
 };
