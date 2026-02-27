@@ -178,37 +178,13 @@ function AdminDashboard() {
     </motion.div>
   );
 
-  // Acciones Rápidas — Promociones y Reportes comentadas, sección oculta en el render
-  const quickActions = [
-    {
-      label: 'Gestionar Productos',
-      desc: 'Agregar, editar o eliminar productos',
-      icon: Package,
-      href: '/admin/products',
-      available: true,
-    },
-    {
-      label: 'Control de Inventario',
-      desc: 'Actualizar stock de ingredientes',
-      icon: Settings,
-      href: '/admin/inventory',
-      available: true,
-    },
-    // {
-    //   label: 'Promociones',
-    //   desc: 'Activar/desactivar ofertas',
-    //   icon: Tag,
-    //   href: '/admin/promotions',
-    //   available: true,
-    // },
-    // {
-    //   label: 'Reportes',
-    //   desc: 'Ver análisis y métricas con gráficas',
-    //   icon: BarChart3,
-    //   href: '/admin/reports',
-    //   available: true,
-    // },
-  ];
+  // Acciones Rápidas — Sección completa comentada (oculta del render)
+  // const quickActions = [
+  //   { label: 'Gestionar Productos', desc: 'Agregar, editar o eliminar productos', icon: Package, href: '/admin/products', available: true },
+  //   { label: 'Control de Inventario', desc: 'Actualizar stock de ingredientes', icon: Settings, href: '/admin/inventory', available: true },
+  //   // { label: 'Promociones', desc: 'Activar/desactivar ofertas', icon: Tag, href: '/admin/promotions', available: true },
+  //   // { label: 'Reportes', desc: 'Ver análisis y métricas con gráficas', icon: BarChart3, href: '/admin/reports', available: true },
+  // ];
 
   return (
     <div className="min-h-screen bg-black">
@@ -327,12 +303,20 @@ function AdminDashboard() {
           </motion.div>
         )}
 
-        {/* Orders only — Quick Actions ocultadas */}
-        <div className="grid lg:grid-cols-1 gap-8 mb-8">
-          {/* Recent Orders */}
+        {/* ─── Max — Chat del Agente ───────────────────────────────────────────── */}
+        <MaxChatSection
+          criticalAlertsCount={alerts.filter(a => a.alert_type === 'out_of_stock').length}
+          pendingOrdersCount={orders.filter(o => o.status === 'pending').length}
+        />
+
+        {/* ─── Pedidos Recientes + Gestión ─────────────────────────────────────── */}
+        <div className="grid lg:grid-cols-3 gap-8 mt-8">
+
+          {/* Pedidos Recientes */}
           <motion.div
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
             className="bg-zinc-900 border border-zinc-800 rounded-xl p-6"
           >
             <h2 className="text-2xl font-bold text-white mb-4">Pedidos Recientes</h2>
@@ -378,59 +362,101 @@ function AdminDashboard() {
             )}
           </motion.div>
 
-          {/* COMENTADO: Quick Actions — Oculto temporalmente
+          {/* Gestión de Productos */}
           <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
             className="bg-zinc-900 border border-zinc-800 rounded-xl p-6"
           >
-            <h2 className="text-2xl font-bold text-white mb-4">Acciones Rápidas</h2>
+            <div className="flex items-center gap-3 mb-6">
+              <div className="p-2 rounded-lg bg-red-600/20">
+                <Package className="w-6 h-6 text-red-500" />
+              </div>
+              <h2 className="text-2xl font-bold text-white">Gestión de Productos</h2>
+            </div>
+            <p className="text-gray-400 text-sm mb-6">
+              Administra el menú: agrega nuevos productos, edita precios, descripciones e imágenes, o desactiva los que no estén disponibles.
+            </p>
             <div className="space-y-3">
-              {quickActions.map((action) => (
-                action.available ? (
-                  <Link
-                    key={action.label}
-                    href={action.href}
-                    className="w-full bg-zinc-800 hover:bg-zinc-700 text-white p-4 rounded-lg transition-colors text-left flex items-center justify-between group"
-                  >
-                    <div className="flex items-center gap-3">
-                      <action.icon className="w-5 h-5 text-red-500" />
-                      <div>
-                        <div className="font-semibold">{action.label}</div>
-                        <div className="text-sm text-gray-400">{action.desc}</div>
-                      </div>
-                    </div>
-                    <ChevronRight className="w-5 h-5 text-gray-500 group-hover:text-white transition-colors" />
-                  </Link>
-                ) : (
-                  <div
-                    key={action.label}
-                    className="w-full bg-zinc-800/50 text-white p-4 rounded-lg text-left flex items-center justify-between opacity-60 cursor-not-allowed"
-                    title="Próximamente"
-                  >
-                    <div className="flex items-center gap-3">
-                      <action.icon className="w-5 h-5 text-gray-500" />
-                      <div>
-                        <div className="font-semibold">{action.label}</div>
-                        <div className="text-sm text-gray-500">{action.desc}</div>
-                      </div>
-                    </div>
-                    <span className="text-xs text-gray-600 bg-zinc-700 px-2 py-1 rounded-full">
-                      Próximamente
-                    </span>
+              <Link
+                href="/admin/products"
+                className="w-full bg-zinc-800 hover:bg-zinc-700 text-white p-4 rounded-lg transition-colors flex items-center justify-between group"
+              >
+                <div className="flex items-center gap-3">
+                  <Package className="w-5 h-5 text-red-500" />
+                  <div>
+                    <div className="font-semibold">Ver productos</div>
+                    <div className="text-sm text-gray-400">Listado completo del menú</div>
                   </div>
-                )
-              ))}
+                </div>
+                <ChevronRight className="w-5 h-5 text-gray-500 group-hover:text-white transition-colors" />
+              </Link>
+              <Link
+                href="/admin/products?action=new"
+                className="w-full bg-red-600/10 hover:bg-red-600/20 border border-red-600/30 text-white p-4 rounded-lg transition-colors flex items-center justify-between group"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="text-red-400 text-lg font-bold">+</span>
+                  <div>
+                    <div className="font-semibold">Agregar producto</div>
+                    <div className="text-sm text-gray-400">Nuevo ítem al menú</div>
+                  </div>
+                </div>
+                <ChevronRight className="w-5 h-5 text-gray-500 group-hover:text-white transition-colors" />
+              </Link>
             </div>
           </motion.div>
-          */}
-        </div>
 
-        {/* ─── Max — Chat del Agente ───────────────────────────────────────────── */}
-        <MaxChatSection
-          criticalAlertsCount={alerts.filter(a => a.alert_type === 'out_of_stock').length}
-          pendingOrdersCount={orders.filter(o => o.status === 'pending').length}
-        />
+          {/* Control de Inventario */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="bg-zinc-900 border border-zinc-800 rounded-xl p-6"
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <div className="p-2 rounded-lg bg-yellow-600/20">
+                <Settings className="w-6 h-6 text-yellow-500" />
+              </div>
+              <h2 className="text-2xl font-bold text-white">Control de Inventario</h2>
+            </div>
+            <p className="text-gray-400 text-sm mb-6">
+              Monitorea y actualiza el stock de ingredientes. Recibe alertas cuando el inventario esté bajo o agotado.
+            </p>
+            <div className="space-y-3">
+              <Link
+                href="/admin/inventory"
+                className="w-full bg-zinc-800 hover:bg-zinc-700 text-white p-4 rounded-lg transition-colors flex items-center justify-between group"
+              >
+                <div className="flex items-center gap-3">
+                  <Settings className="w-5 h-5 text-yellow-500" />
+                  <div>
+                    <div className="font-semibold">Ver inventario</div>
+                    <div className="text-sm text-gray-400">Estado actual del stock</div>
+                  </div>
+                </div>
+                <ChevronRight className="w-5 h-5 text-gray-500 group-hover:text-white transition-colors" />
+              </Link>
+              {alerts.length > 0 && (
+                <Link
+                  href="/admin/inventory"
+                  className="w-full bg-yellow-600/10 hover:bg-yellow-600/20 border border-yellow-600/30 text-white p-4 rounded-lg transition-colors flex items-center justify-between group"
+                >
+                  <div className="flex items-center gap-3">
+                    <AlertTriangle className="w-5 h-5 text-yellow-400" />
+                    <div>
+                      <div className="font-semibold">Ver alertas</div>
+                      <div className="text-sm text-yellow-500">{alerts.length} alerta{alerts.length !== 1 ? 's' : ''} activa{alerts.length !== 1 ? 's' : ''}</div>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-gray-500 group-hover:text-white transition-colors" />
+                </Link>
+              )}
+            </div>
+          </motion.div>
+
+        </div>
       </div>
     </div>
   );
