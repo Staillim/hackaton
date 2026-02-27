@@ -746,12 +746,53 @@ IMPORTANTE: El carrito NO se abre hasta que el usuario quiera. La orden va DIREC
 
 // 🐛 Prompt básico para modo DEBUG (reduce tokens ~70%) - con ingredientes en tiempo real
 const getBasicSystemPrompt = async () => {
-  // 🔥 SIEMPRE consulta ingredientes en tiempo real (sin cache)
+  // 🔥 SIEMPRE consulta ingredientes Y productos en tiempo real (sin cache)
   let ingredientContext = '';
   let ingredientsMenuText = '';
+  let productContext = '';
   // Mapa de stock para acceso rápido por nombre (en minúsculas)
   const stockMap: Record<string, number> = {};
 
+  // ============================================
+  // 1️⃣ CONSULTAR STOCK DE PRODUCTOS
+  // ============================================
+  try {
+    const { data: products } = await supabase
+      .from('products')
+      .select('name, stock_quantity, active')
+      .order('name');
+
+    if (products && products.length > 0) {
+      const productsUnavailable = (products as any[]).filter(
+        (p: any) => !p.active || p.stock_quantity <= 0
+      );
+      const productsLowStock = (products as any[]).filter(
+        (p: any) => p.active && p.stock_quantity > 0 && p.stock_quantity <= 5
+      );
+      const productsAvailable = (products as any[]).filter(
+        (p: any) => p.active && p.stock_quantity > 5
+      );
+
+      if (productsUnavailable.length > 0) {
+        productContext += `\n\n❌ PRODUCTOS AGOTADOS HOY (NO OFRECER): ${productsUnavailable.map((p: any) => p.name).join(', ')}`;
+      }
+      if (productsLowStock.length > 0) {
+        productContext += `\n⚠️ PRODUCTOS CON STOCK LIMITADO: ${productsLowStock.map((p: any) => `${p.name} (${p.stock_quantity} und.)`).join(', ')}`;
+      }
+      if (productsAvailable.length > 0) {
+        // 🔥 MOSTRAR CANTIDAD EXACTA DE TODOS LOS PRODUCTOS (no solo limitados)
+        productContext += `\n✅ PRODUCTOS DISPONIBLES: ${productsAvailable.map((p: any) => `${p.name} (${p.stock_quantity} und.)`).join(', ')}`;
+      }
+
+      console.log('📦 Stock de productos cargado:', products.length, 'productos');
+    }
+  } catch (e) {
+    console.warn('⚠️ No se pudo cargar stock de productos:', e);
+  }
+
+  // ============================================
+  // 2️⃣ CONSULTAR STOCK DE INGREDIENTES
+  // ============================================
   try {
     const { data: ingredients } = await supabase
       .from('ingredients')
@@ -779,7 +820,7 @@ const getBasicSystemPrompt = async () => {
       }
       if (lowStock.length > 0) {
         // Mostrar cantidad exacta para que sepa si puede cubrir el pedido
-        ingredientContext += `\n⚠️ STOCK LIMITADO (unidades exactas disponibles): ${lowStock.map((i: any) => `${i.name} (${i.stock_quantity} und.)`).join(', ')}`;
+        ingredientContext += `\n⚠️ INGREDIENTES CON STOCK LIMITADO: ${lowStock.map((i: any) => `${i.name} (${i.stock_quantity} und.)`).join(', ')}`;
       }
       if (available.length > 0) {
         ingredientContext += `\n✅ INGREDIENTES DISPONIBLES: ${available.map((i: any) => i.name).join(', ')}`;
@@ -790,6 +831,8 @@ const getBasicSystemPrompt = async () => {
       if (sellableItems.length > 0) {
         ingredientsMenuText = `\n\n🛒 PRODUCTOS INDIVIDUALES DISPONIBLES:\n${sellableItems.map((i: any) => `- ${i.name} $${i.price.toFixed(2)}`).join('\n')}`;
       }
+
+      console.log('🥤 Stock de ingredientes cargado:', ingredients.length, 'ingredientes');
     }
   } catch (e) {
     console.warn('⚠️ No se pudo cargar stock de ingredientes:', e);
@@ -807,11 +850,31 @@ MENÚ:
 🥤 Coca-Cola 500ml $1.99
 🥤 Sprite 500ml $1.99
 🥤 Fanta 500ml $1.99
-🥤 Agua 500ml $0.99${ingredientsMenuText}${ingredientContext}
+🥤 Agua 500ml $0.99${ingredientsMenuText}
+
+📊 ESTADO DE INVENTARIO EN TIEMPO REAL:
+═══════════════════════════════════════════════${productContext}${ingredientContext}
+
+⚠️ IMPORTANTE: SIEMPRE VERIFICA LA CANTIDAD EXACTA DISPONIBLE
+- TODOS los productos muestran cantidad exacta: "Producto X (85 und.)"
+- ANTES de confirmar, COMPARA: cantidad solicitada vs cantidad disponible
+- Si solicitan MÁS de lo disponible → Dile la cantidad EXACTA que hay
+- Si un producto está en ❌ AGOTADO: NO lo ofrezcas, sugiere alternativa
+- Si un ingrediente está en ❌ NO DISPONIBLE: NO lo ofrezcas como adición
+
+🔥 EJEMPLOS CRÍTICOS:
+  Cliente: "90 Coca-Colas"
+  Stock: Coca-Cola 500ml (85 und.)
+  ❌ MAL: "¡Claro que sí! Tenemos suficiente"
+  ✅ BIEN: "Tenemos 85 Coca-Colas disponibles, no alcanzan para 90. ¿Quieres las 85 o prefieres otra cantidad?"
+
+  Cliente: "10 Combos"
+  Stock: Combo SmartBurger (15 und.)
+  ✅ BIEN: "¡Perfecto! Tenemos stock. ¿Confirmas 10 Combos?"
 
 FLUJO:
-1. Usuario pide → confirmas
-2. Sugieres complementos
+1. Usuario pide → VERIFICAS CANTIDAD EXACTA EN STOCK → confirmas disponibilidad
+2. Sugieres complementos (solo los que tienen stock)
 3. Usuario confirma → usas [ADD_TO_CART:Producto:Cantidad:::] para cada item
 4. Usas [CONFIRM_ORDER]
 
@@ -825,29 +888,48 @@ Ejemplo: "[ADD_TO_CART:Combo SmartBurger:1:::][CONFIRM_ORDER] ¡Listo! Tu orden 
 
 REGLAS CRÍTICAS - LEE CON ATENCIÓN:
 
-1. NUNCA agregues al carrito hasta que el cliente confirme. Usa emojis 🍔🥤🍟
+1. VERIFICAR STOCK SIEMPRE (PRODUCTOS E INGREDIENTES):
+   - ANTES de aceptar cualquier pedido, revisa el inventario arriba ☝️
+   - TODOS los productos muestran cantidad EXACTA disponible: "Producto (X und.)"
+   - Si un PRODUCTO está agotado (❌): Ofrece alternativa inmediatamente
+     ✅ Ejemplo: "Lo siento, hoy no tenemos Papas Fritas 😢 Pero tenemos Aros de Cebolla disponibles, ¿te gustan?"
+   - Si piden MÁS unidades de las disponibles: Dile la cantidad EXACTA que hay
+     ✅ Ejemplo: "Tenemos 85 Coca-Colas disponibles, no 90. ¿Quieres las 85?"
+   - Si un INGREDIENTE está agotado (❌): NO lo ofrezcas como adición
+   - Si un INGREDIENTE tiene stock limitado (⚠️) y piden MÁS adiciones de las disponibles: Dile cuántas quedan
+     ✅ Ejemplo: "Solo contamos con 1 aguacate disponible, no podemos cubrir las 2 adiciones. ¿Quieres agregar solo 1?"
 
-2. INGREDIENTES NO DISPONIBLES (❌):
-   - Si un ingrediente está en ❌, NUNCA lo ofrezcas ni lo menciones como opción.
-   - Si el cliente lo pide, dile claramente que hoy no está disponible y sugiere alternativa.
-   - ⚠️ NO te disculpes por pedidos ANTERIORES que fueron válidos cuando se hicieron. Cada pedido es independiente. Solo informa sobre la disponibilidad ACTUAL para el pedido NUEVO.
+2. NUNCA agregues al carrito hasta que el cliente confirme. Usa emojis 🍔🥤🍟
 
-3. STOCK LIMITADO (⚠️ con unidades exactas):
-   - Verifica si las unidades disponibles alcanzan para lo que pide el cliente.
-   - Si pide MÁS unidades de las que hay: dile exactamente cuántas quedan y pregunta si acepta esa cantidad.
-     ✅ Ejemplo: "Solo contamos con 1 aguacate disponible, no podemos cubrir las 2 adiciones. ¿Quieres agregar solo 1 aguacate y complementar con otro ingrediente?"
-   - Si pide igual o menos que el stock: procede normalmente.
+3. PRODUCTOS AGOTADOS (❌):
+   - Si un producto está en ❌, NUNCA lo ofrezcas ni lo menciones como opción disponible.
+   - Si el cliente lo pide, dile claramente que hoy no está disponible y sugiere alternativa del mismo tipo.
+   - ⚠️ NO te disculpes por pedidos ANTERIORES. Cada pedido es independiente.
 
-4. PERSONALIZACIONES LÓGICAS:
+4. INGREDIENTES NO DISPONIBLES (❌):
+   - Si un ingrediente está en ❌, NUNCA lo ofrezcas como adición ni complemento.
+   - Si el cliente lo pide como extra, dile que hoy no está disponible y sugiere otro ingrediente similar.
+
+5. VERIFICACIÓN DE CANTIDAD (⚠️ CRÍTICO):
+   - SIEMPRE compara: cantidad solicitada vs cantidad disponible mostrada entre paréntesis
+   - Cada producto muestra stock exacto: "Coca-Cola 500ml (85 und.)"
+   - Si solicitan MÁS de lo disponible:
+     ✅ "Tenemos 85 Coca-Colas disponibles, no 90. ¿Quieres las 85?"
+     ❌ NO digas: "¡Claro!" o "Sí tenemos" sin verificar
+   - Si solicitan IGUAL o MENOS que el stock disponible:
+     ✅ "¡Perfecto! Tenemos suficiente para tu pedido"
+   - Aplica igual para ingredientes adicionales (aguacate, queso extra, etc.)
+
+6. PERSONALIZACIONES LÓGICAS:
    - NUNCA permitas remover el ingrediente principal de un plato. Es ilógico e imposible.
      ❌ INCORRECTO: "Aros de cebolla sin cebolla" → RECHAZA esto.
      ❌ INCORRECTO: "Hamburguesa sin carne" → RECHAZA esto.
-   - Si el cliente pide algo así, explícale amablemente que ese ingrediente es esencial para el plato y ofrece un plato diferente si quiere evitarlo.
-     ✅ Ejemplo: "Los aros de cebolla tienen la cebolla como ingrediente principal, ¡no pueden existir sin ella! 😅 Si no quieres cebolla, ¿te puedo recomendar las Papas Fritas?"
+   - Si el cliente pide algo así, explícale amablemente que ese ingrediente es esencial.
+     ✅ Ejemplo: "Los aros de cebolla tienen la cebolla como ingrediente principal, ¡no pueden existir sin ella! 😅 ¿Te recomiendo las Papas Fritas?"
 
-5. HISTORIAL DE PEDIDOS:
+7. HISTORIAL DE PEDIDOS:
    - No hagas comentarios sobre pedidos anteriores del cliente a menos que él lo mencione.
-   - Si un ingrediente estaba disponible en un pedido anterior y ya no lo está, simplemente informa la situación actual sin apologías por el pasado.`;
+   - Si un producto/ingrediente estaba disponible antes y ya no lo está, simplemente informa la situación actual sin apologías.`;
 };
 
 export async function POST(request: NextRequest) {

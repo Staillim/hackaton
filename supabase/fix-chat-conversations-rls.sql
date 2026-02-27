@@ -49,30 +49,30 @@ WHERE tablename = 'chat_conversations';
 -- ============================================
 
 -- Test 1: Crear conversación de prueba
-INSERT INTO chat_conversations (session_id, user_email, messages)
+INSERT INTO chat_conversations (session_id, messages, status)
 VALUES (
   'test-session-' || gen_random_uuid(),
-  'test@example.com',
-  '[{"role": "user", "content": "Hola", "timestamp": "2024-02-27T10:00:00Z"}]'::jsonb
+  '[{"role": "user", "content": "Hola", "timestamp": "2024-02-27T10:00:00Z"}]'::jsonb,
+  'active'
 );
 
 -- Test 2: Verificar que se creó
 SELECT 
   session_id,
-  user_email,
+  status,
   jsonb_array_length(messages) as message_count,
   created_at
 FROM chat_conversations
-WHERE user_email = 'test@example.com'
+WHERE session_id LIKE 'test-session-%'
 ORDER BY created_at DESC
 LIMIT 1;
 
 -- Test 3: Actualizar (UPSERT pattern)
-INSERT INTO chat_conversations (session_id, user_email, messages)
+INSERT INTO chat_conversations (session_id, messages, status)
 VALUES (
-  'test-session-123',
-  'test2@example.com',
-  '[{"role": "user", "content": "Test mensaje"}]'::jsonb
+  'test-session-upsert-123',
+  '[{"role": "user", "content": "Test mensaje"}]'::jsonb,
+  'active'
 )
 ON CONFLICT (session_id)
 DO UPDATE SET
@@ -80,7 +80,7 @@ DO UPDATE SET
   updated_at = NOW();
 
 -- Limpiar tests
-DELETE FROM chat_conversations WHERE user_email IN ('test@example.com', 'test2@example.com');
+DELETE FROM chat_conversations WHERE session_id LIKE 'test-session-%';
 
 -- ============================================
 -- RESULTADO ESPERADO
