@@ -367,10 +367,15 @@ export async function POST(request: NextRequest) {
       const systemContext = await buildDynamicSystemContext(metrics);
 
       // Convertir historial a formato Gemini (user/model en lugar de user/assistant)
-      const geminiHistory = history.map(m => ({
+      // Gemini requiere que el historial EMPIECE con role 'user' — eliminar mensajes iniciales de 'model'
+      const rawHistory = history.map(m => ({
         role: m.role === 'assistant' ? 'model' : 'user',
         parts: [{ text: m.content }],
       }));
+      // Eliminar mensajes 'model' al inicio hasta encontrar el primer 'user'
+      const firstUserIdx = rawHistory.findIndex(m => m.role === 'user');
+      // Si no hay ningún 'user' en el historial o empieza con 'model', ajustar
+      const geminiHistory = firstUserIdx === -1 ? [] : rawHistory.slice(firstUserIdx);
 
       console.log('🤖 Iniciando chat con Gemini (gemini-2.5-pro)...');
 
@@ -422,7 +427,7 @@ export async function POST(request: NextRequest) {
               console.log('✅ Resultado:', actionResult);
               break;
             case 'update_product_stock':
-              result = await executeUpdateProductStock(toolArgs.product_name, toolArgs.quantity);
+              actionResult = await executeUpdateProductStock(args.product_name, args.quantity);
               break;
             case 'toggle_product':
               actionResult = await executeToggleProduct(args.product_name, args.active);
