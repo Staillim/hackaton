@@ -55,8 +55,11 @@ export default function ChatWidget() {
   const handleCreateOrderFromChat = async () => {
     console.log('🎯 [handleCreateOrderFromChat] INICIO DE FUNCIÓN');
     console.log('👤 [handleCreateOrderFromChat] Usuario autenticado:', !!user);
-    console.log('🛒 [handleCreateOrderFromChat] Items en carrito:', cart.items.length);
-    console.log('📋 [handleCreateOrderFromChat] Detalle de items:', cart.items.map(i => ({
+    
+    // 🔥 CRÍTICO: Leer estado ACTUAL desde Zustand (no usar cart del closure)
+    const currentCartState = useCartStore.getState().cart;
+    console.log('🛒 [handleCreateOrderFromChat] Items en carrito (ESTADO ACTUAL):', currentCartState.items.length);
+    console.log('📋 [handleCreateOrderFromChat] Detalle de items:', currentCartState.items.map(i => ({
       producto: i.product.name,
       cantidad: i.quantity,
       customizaciones: i.customizations
@@ -68,7 +71,7 @@ export default function ChatWidget() {
       return;
     }
 
-    if (cart.items.length === 0) {
+    if (currentCartState.items.length === 0) {
       console.error('❌ [handleCreateOrderFromChat] Carrito vacío - ABORTANDO');
       toast.error('Tu carrito está vacío. Algo salió mal, intenta de nuevo.', {
         duration: 5000,
@@ -78,16 +81,16 @@ export default function ChatWidget() {
 
     try {
       console.log('🎯 [Chat] Iniciando creación de orden desde chat');
-      console.log('📋 [Chat] Items en carrito:', cart.items.length);
+      console.log('📋 [Chat] Items en carrito:', currentCartState.items.length);
 
       // Crear la orden
       const orderData = {
         customer_name: profile?.full_name || user.email,
         customer_email: user.email,
         customer_phone: profile?.phone || '',
-        total_amount: cart.subtotal,
-        discount_amount: cart.discount,
-        final_amount: cart.total,
+        total_amount: currentCartState.subtotal,
+        discount_amount: currentCartState.discount,
+        final_amount: currentCartState.total,
         status: 'pending',
         payment_status: 'pending',
         notes: 'Orden creada desde el chat',
@@ -98,7 +101,7 @@ export default function ChatWidget() {
       console.log('✅ [Chat] Orden creada:', order.order_number);
 
       // Crear los items de la orden
-      const orderItems = cart.items.map(item => ({
+      const orderItems = currentCartState.items.map(item => ({
         order_id: order.id,
         product_id: item.product.id,
         quantity: item.quantity,
@@ -297,7 +300,11 @@ export default function ChatWidget() {
         // Esperar un ciclo de renderizado para asegurar que el estado se actualizó
         setTimeout(() => {
           const currentCart = useCartStore.getState().cart;
-          console.log('📋 Items en carrito al momento de confirmar:', currentCart.items.length);
+          console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          console.log('📋 VERIFICACIÓN ANTES DE CONFIRMAR ORDEN:');
+          console.log('🛒 Items en carrito:', currentCart.items.length);
+          console.log('📦 Productos:', currentCart.items.map(i => `${i.product.name} x${i.quantity}`).join(', '));
+          console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
           
           if (currentCart.items.length === 0) {
             console.error('❌ Error: El carrito está vacío al intentar confirmar');
