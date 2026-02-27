@@ -2,6 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getBestSellingProducts, saveChatMessage, getChatHistory, getUserPreferences, analyzeUserPatterns, getSmartRecommendations, getCurrentTimeContext, getLowStockProducts } from '@/lib/supabase';
 import { createClient } from '@supabase/supabase-js';
+import { cache } from '@/lib/cache';
+
+// 💰 MODO DEBUG: Reduce contexto para testing (ahorra 70% de tokens)
+const DEBUG_MODE = process.env.ENABLE_FULL_CONTEXT !== 'true';
+
+// 📊 Contador de tokens para monitoreo de costos
+let tokenStats = {
+  totalInputTokens: 0,
+  totalOutputTokens: 0,
+  totalRequests: 0,
+  estimatedCost: 0,
+};
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
@@ -73,48 +85,68 @@ const getProductsByNames = async (productNames: string[]) => {
 };
 
 const getEnhancedSystemPrompt = async (sessionId: string, userEmail?: string) => {
-  // Obtener productos más vendidos
-  const bestSellers = await getBestSellingProducts(3).catch(() => []);
+  // 🚀 OPTIMIZACIÓN: En modo DEBUG, usar contexto mínimo
+  if (DEBUG_MODE) {
+    console.log('🐛 DEBUG MODE: Usando prompt reducido (ahorra ~70% tokens)');
+    return getBasicSystemPrompt();
+  }
+
+  // ⚡ CACHE: Obtener productos más vendidos (cache 10 min)
+  let bestSellers = cache.get<any[]>('bestSellers');
+  if (!bestSellers) {
+    bestSellers = await getBestSellingProducts(3).catch(() => []);
+    cache.set('bestSellers', bestSellers, 10);
+  }
   const bestSellersText = bestSellers.map((item: any, i: number) => 
     `${i + 1}. ${item.product?.name} ($${item.product?.base_price})`
   ).join(', ');
 
-  // Obtener preferencias del usuario si existen
-  const preferences = await getUserPreferences(sessionId).catch(() => null);
+  // ⚡ CACHE: Preferencias del usuario (cache 5 min)
+  let preferences: any = cache.get(`preferences_${sessionId}`);
+  if (!preferences) {
+    preferences = await getUserPreferences(sessionId).catch(() => null);
+    if (preferences) {
+      cache.set(`preferences_${sessionId}`, preferences, 5);
+    }
+  }
   const preferencesText = preferences 
     ? `\nPreferencias: ${preferences.likes || '-'} | Alergias: ${preferences.allergies || 'ninguna'}`
     : '';
 
-  // Analizar comportamiento del usuario si tiene email
-  let userPatterns = null;
+  // ⚡ CACHE: Análisis de comportamiento (cache 5 min) - LAZY LOADING
+  let userPatterns: any = null;
   let userContext = '';
   if (userEmail) {
-    userPatterns = await analyzeUserPatterns(userEmail).catch(() => null);
-    if (userPatterns && userPatterns.hasHistory) {
-      userContext = `\n\n🧠 ANÁLISIS DE COMPORTAMIENTO DEL USUARIO:
-- Órdenes previas: ${userPatterns.totalOrders}
-- Ticket promedio: $${userPatterns.averageOrderValue}
-- Productos favoritos: ${userPatterns.favoriteProducts.join(', ') || 'ninguno'}
-- Siempre quita: ${userPatterns.commonRemovals.join(', ') || 'nada'}
-- Siempre agrega: ${userPatterns.commonAdditions.join(', ') || 'nada'}
-- Hora preferida: ${userPatterns.preferredTime || 'no definida'}
-
-💡 USA ESTA INFO PARA:
-1. Sugerir sus productos favoritos
-2. Aplicar automáticamente sus customizaciones comunes
-3. Mencionar que "veo que siempre..." cuando sea relevante`;
+    userPatterns = cache.get(`patterns_${userEmail}`);
+    if (!userPatterns) {
+      userPatterns = await analyzeUserPatterns(userEmail).catch(() => null);
+      if (userPatterns) {
+        cache.set(`patterns_${userEmail}`, userPatterns, 5);
+      }
+    }
+    
+    // Solo incluir si tiene historial real (optimización)
+    if (userPatterns && userPatterns.hasHistory && userPatterns.totalOrders > 0) {
+      userContext = `\n\n🧠 ANÁLISIS:
+- Órdenes: ${userPatterns.totalOrders}
+- Favoritos: ${userPatterns.favoriteProducts.slice(0, 2).join(', ') || 'ninguno'}
+- Siempre quita: ${userPatterns.commonRemovals.slice(0, 2).join(', ') || 'nada'}`;
     }
   }
 
-  // Obtener productos con stock bajo
-  const lowStockProducts = await getLowStockProducts().catch(() => []);
+  // ⚡ CACHE: Stock bajo (cache 15 min)
+  let lowStockProducts = cache.get<any[]>('lowStock');
+  if (!lowStockProducts) {
+    lowStockProducts = await getLowStockProducts().catch(() => []);
+    cache.set('lowStock', lowStockProducts, 15);
+  }
   const lowStockText = lowStockProducts.length > 0
-    ? `\n\n⚠️ PRODUCTOS CON STOCK LIMITADO (no sugieras mucho):\n${lowStockProducts.map(p => `- ${p.name} (${p.stock_quantity} unidades)`).join('\n')}`
+    ? `\n\n⚠️ STOCK LIMITADO: ${lowStockProducts.slice(0, 3).map(p => p.name).join(', ')}`
     : '';
 
-  // Obtener contexto temporal
+  // Contexto temporal (sin cache, es rápido)
   const timeContext = getCurrentTimeContext();
-  const timeContextText = `\n\n🕐 CONTEXTO ACTUAL: ${timeContext === 'morning' ? 'Mañana' : timeContext === 'afternoon' ? 'Tarde' : timeContext === 'evening' ? 'Noche' : 'Madrugada'}`;
+  const timeContextText = `\n\n🕐 ${timeContext === 'morning' ? 'Mañana' : timeContext === 'afternoon' ? 'Tarde' : timeContext === 'evening' ? 'Noche' : 'Madrugada'}`;
 
   return `INSTRUCCIÓN CRÍTICA: Responde SIEMPRE en español. NUNCA agregues al carrito hasta que el usuario confirme TODO su pedido.
 
@@ -245,6 +277,32 @@ ${bestSellersText ? `⭐ Populares: ${bestSellersText}` : ''}${preferencesText}$
 IMPORTANTE: El carrito NO se abre hasta que el usuario quiera. La orden va DIRECTO a cocina con [CONFIRM_ORDER].`;
 };
 
+// 🐛 Prompt básico para modo DEBUG (reduce tokens ~70%)
+const getBasicSystemPrompt = () => {
+  return `Eres María de SmartBurger. Habla en español, tono amigable.
+
+MENÚ:
+🍔 SmartBurger Clásica $5.99
+🍔 Doble Queso Deluxe $8.99
+🎁 Combo SmartBurger $9.99 (incluye papas + bebida)
+🎁 Combo Deluxe $12.99 (incluye papas + bebida)
+🍟 Papas Fritas $2.99
+🧅 Aros de Cebolla $3.49
+🥤 Coca-Cola, Sprite, Fanta $1.99
+🥤 Agua $0.99
+
+FLUJO:
+1. Usuario pide → confirmas
+2. Sugieres complementos
+3. Usuario confirma → usas [ADD_TO_CART:Producto:Cantidad:::] para cada item
+4. Usas [CONFIRM_ORDER]
+
+Formato: [ADD_TO_CART:Nombre:Cantidad:Extras:Quitar:Notas]
+Ejemplo: "[ADD_TO_CART:Combo SmartBurger:1:::][CONFIRM_ORDER] ¡Listo! Tu orden va a cocina 🎉"
+
+NUNCA agregues al carrito hasta que confirmen. Usa emojis 🍔🥤🍟`;
+};
+
 export async function POST(request: NextRequest) {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('🤖 CHAT API - Nueva solicitud');
@@ -321,13 +379,19 @@ export async function POST(request: NextRequest) {
       throw new Error('No hay modelos Gemini disponibles con quota');
     }
 
-    // Construir el historial completo de conversación
-    const conversationHistory = messages
+    // 🎯 OPTIMIZACIÓN: Limitar historial a últimos 10 mensajes (ahorra tokens)
+    const recentMessages = messages.slice(-10);
+    const conversationHistory = recentMessages
       .map((msg: any) => `${msg.role === 'user' ? 'Cliente' : 'María'}: ${msg.content}`)
       .join('\n\n');
 
     // Obtener el último mensaje del usuario
     const lastUserMessage = messages[messages.length - 1]?.content || '';
+    
+    // 📊 Logging de uso (para monitoreo)
+    if (messages.length > 10) {
+      console.log(`⚠️ Historial truncado: ${messages.length} → 10 mensajes (ahorro de ~${(messages.length - 10) * 100} tokens)`);
+    }
 
     console.log('📝 Historial de conversación:', conversationHistory.length, 'caracteres');
     console.log('💭 Último mensaje:', lastUserMessage);
@@ -344,6 +408,11 @@ María (responde de forma natural, cálida y conversacional, recordando TODO lo 
 
     console.log('🚀 Enviando prompt a Gemini...');
     console.log('📏 Tamaño del prompt:', fullPrompt.length, 'caracteres');
+    
+    // 💰 Estimar tokens (aprox: 1 token = 4 caracteres en español)
+    const estimatedInputTokens = Math.ceil(fullPrompt.length / 4);
+    console.log('💰 Tokens estimados (input):', estimatedInputTokens);
+    console.log('🐛 Modo DEBUG:', DEBUG_MODE ? 'ACTIVADO (contexto reducido)' : 'DESACTIVADO (contexto completo)');
 
     // Generar respuesta con Gemini (con retry en caso de fallo de quota)
     let responseMessage = '';
@@ -355,7 +424,39 @@ María (responde de forma natural, cálida y conversacional, recordando TODO lo 
         const result = await model.generateContent(fullPrompt);
         const response = await result.response;
         responseMessage = response.text();
-        console.log('✅ Respuesta recibida de Gemini con modelo:', selectedModel);
+        
+        // 💰 Logging de tokens y costos
+        const estimatedOutputTokens = Math.ceil(responseMessage.length / 4);
+        const estimatedInputTokens = Math.ceil(fullPrompt.length / 4);
+        
+        // Costos por modelo (USD por 1M tokens)
+        const costs: any = {
+          'gemini-2.5-pro': { input: 1.25, output: 5.00 },
+          'gemini-2.0-flash': { input: 0.075, output: 0.30 },
+          'gemini-2.5-flash': { input: 0.075, output: 0.30 },
+          'gemini-pro-latest': { input: 1.25, output: 5.00 },
+        };
+        
+        const modelCost = costs[selectedModel] || costs['gemini-2.5-pro'];
+        const requestCost = (
+          (estimatedInputTokens / 1_000_000) * modelCost.input +
+          (estimatedOutputTokens / 1_000_000) * modelCost.output
+        );
+        
+        tokenStats.totalInputTokens += estimatedInputTokens;
+        tokenStats.totalOutputTokens += estimatedOutputTokens;
+        tokenStats.totalRequests += 1;
+        tokenStats.estimatedCost += requestCost;
+        
+        console.log('✅ Respuesta recibida de Gemini');
+        console.log('📊 Modelo usado:', selectedModel);
+        console.log('💰 Tokens - Input:', estimatedInputTokens, '| Output:', estimatedOutputTokens);
+        console.log('💵 Costo estimado esta request: $', requestCost.toFixed(4));
+        console.log('📈 TOTAL ACUMULADO:');
+        console.log('   - Requests:', tokenStats.totalRequests);
+        console.log('   - Input tokens:', tokenStats.totalInputTokens.toLocaleString());
+        console.log('   - Output tokens:', tokenStats.totalOutputTokens.toLocaleString());
+        console.log('   - Costo total: $', tokenStats.estimatedCost.toFixed(2));
         break;
       } catch (error: any) {
         console.log(`❌ Error con modelo ${selectedModel}:`, error.message?.substring(0, 100));
