@@ -53,13 +53,26 @@ export default function ChatWidget() {
 
   // Función para crear orden desde el chat
   const handleCreateOrderFromChat = async () => {
+    console.log('🎯 [handleCreateOrderFromChat] INICIO DE FUNCIÓN');
+    console.log('👤 [handleCreateOrderFromChat] Usuario autenticado:', !!user);
+    console.log('🛒 [handleCreateOrderFromChat] Items en carrito:', cart.items.length);
+    console.log('📋 [handleCreateOrderFromChat] Detalle de items:', cart.items.map(i => ({
+      producto: i.product.name,
+      cantidad: i.quantity,
+      customizaciones: i.customizations
+    })));
+
     if (!user) {
+      console.error('❌ [handleCreateOrderFromChat] Usuario no autenticado');
       toast.error('Debes iniciar sesión para confirmar la orden');
       return;
     }
 
     if (cart.items.length === 0) {
-      toast.error('Tu carrito está vacío');
+      console.error('❌ [handleCreateOrderFromChat] Carrito vacío - ABORTANDO');
+      toast.error('Tu carrito está vacío. Algo salió mal, intenta de nuevo.', {
+        duration: 5000,
+      });
       return;
     }
 
@@ -210,10 +223,16 @@ export default function ChatWidget() {
       // Procesar acciones del carrito si hay
       if (data.cartActions && Array.isArray(data.cartActions) && data.cartActions.length > 0) {
         console.log('🛒 Procesando acciones del carrito:', data.cartActions);
+        console.log('🛒 Número de acciones a procesar:', data.cartActions.length);
+        console.log('🛒 Estado del carrito ANTES de agregar:', cart.items.length, 'items');
         
-        data.cartActions.forEach((action: any) => {
+        data.cartActions.forEach((action: any, index: number) => {
+          console.log(`\n🔄 [Acción ${index + 1}/${data.cartActions.length}] Procesando...`);
+          
           if (action.product && action.quantity) {
             console.log(`➕ Agregando al carrito: ${action.product.name} x${action.quantity}`);
+            console.log(`   Product ID: ${action.product.id}`);
+            console.log(`   Base price: $${action.product.base_price}`);
             
             // Preparar personalizaciones si existen
             let customizations = undefined;
@@ -224,10 +243,14 @@ export default function ChatWidget() {
                 notes: action.customizations.notes || '',
               };
               console.log('🎨 Con personalizaciones:', customizations);
+            } else {
+              console.log('📝 Sin personalizaciones');
             }
             
             // Agregar al carrito con o sin personalizaciones
+            console.log('🔧 Llamando a addItem()...');
             addItem(action.product, action.quantity, customizations);
+            console.log('✅ addItem() ejecutado');
             
             // Construir mensaje de notificación
             let notificationText = `${action.product.name}`;
@@ -254,18 +277,38 @@ export default function ChatWidget() {
                 color: '#fff',
               },
             });
+          } else {
+            console.error('❌ Acción inválida (falta product o quantity):', action);
           }
         });
 
         // NO abrimos el carrito automáticamente - se abre solo cuando la orden se confirme
+        console.log('✅ Items agregados al carrito. Total ahora:', cart.items.length);
+        
+        // Verificar estado inmediatamente después
+        const currentState = useCartStore.getState();
+        console.log('🔍 Verificación inmediata del estado de Zustand:', currentState.cart.items.length, 'items');
       }
 
       // Procesar confirmación de orden si se detectó
       if (data.confirmOrder) {
         console.log('✅ Confirmación de orden detectada desde el chat');
+        
+        // Esperar un ciclo de renderizado para asegurar que el estado se actualizó
         setTimeout(() => {
+          const currentCart = useCartStore.getState().cart;
+          console.log('📋 Items en carrito al momento de confirmar:', currentCart.items.length);
+          
+          if (currentCart.items.length === 0) {
+            console.error('❌ Error: El carrito está vacío al intentar confirmar');
+            toast.error('Error: El carrito está vacío. Intenta de nuevo.', {
+              duration: 5000,
+            });
+            return;
+          }
+          
           handleCreateOrderFromChat();
-        }, 1500);
+        }, 500); // Reducido a 500ms ya que addItem es síncrono
       }
 
       const assistantMessage: ChatMessage = {
