@@ -178,6 +178,7 @@ function AdminDashboard() {
     </motion.div>
   );
 
+  // /* Acciones Rápidas — actualmente ocultadas
   const quickActions = [
     {
       label: 'Gestionar Productos',
@@ -193,21 +194,21 @@ function AdminDashboard() {
       href: '/admin/inventory',
       available: true,
     },
-    {
-      label: 'Promociones',
-      desc: 'Activar/desactivar ofertas',
-      icon: Tag,
-      href: '/admin/promotions',
-      available: true,
-    },
-    {
-      label: 'Reportes',
-      desc: 'Ver análisis y métricas con gráficas',
-      icon: BarChart3,
-      href: '/admin/reports',
-      available: true,
-    },
-  ];
+    // {
+    //   label: 'Promociones',
+    //   desc: 'Activar/desactivar ofertas',
+    //   icon: Tag,
+    //   href: '/admin/promotions',
+    //   available: true,
+    // },
+    // {
+    //   label: 'Reportes',
+    //   desc: 'Ver análisis y métricas con gráficas',
+    //   icon: BarChart3,
+    //   href: '/admin/reports',
+    //   available: true,
+    // },
+  ]; // */
 
   return (
     <div className="min-h-screen bg-black">
@@ -326,8 +327,8 @@ function AdminDashboard() {
           </motion.div>
         )}
 
-        {/* Orders + Quick Actions */}
-        <div className="grid lg:grid-cols-2 gap-8 mb-8">
+        {/* Orders only — Quick Actions ocultadas */}
+        <div className="grid lg:grid-cols-1 gap-8 mb-8">
           {/* Recent Orders */}
           <motion.div
             initial={{ opacity: 0, x: -20 }}
@@ -377,7 +378,7 @@ function AdminDashboard() {
             )}
           </motion.div>
 
-          {/* Quick Actions */}
+          {/* COMENTADO: Quick Actions — Oculto temporalmente
           <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -422,7 +423,7 @@ function AdminDashboard() {
               ))}
             </div>
           </motion.div>
-        </div>
+          */}
 
         {/* ─── Max — Chat del Agente ───────────────────────────────────────────── */}
         <MaxChatSection
