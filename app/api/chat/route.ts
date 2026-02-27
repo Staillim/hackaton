@@ -24,6 +24,54 @@ const supabase = createClient(
 // Inicializar Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
+// Función para normalizar texto (quitar acentos, guiones, espacios, símbolos)
+const normalizeText = (text: string): string => {
+  return text
+    .toLowerCase()
+    .normalize('NFD') // Descomponer caracteres acentuados
+    .replace(/[\u0300-\u036f]/g, '') // Eliminar marcas diacríticas (acentos)
+    .replace(/[-.]/g, '') // Eliminar guiones y puntos
+    .replace(/\s+/g, ' ') // Normalizar espacios múltiples a uno solo
+    .trim();
+};
+
+// Función para tokenizar (dividir en palabras)
+const tokenize = (text: string): string[] => {
+  return normalizeText(text).split(' ').filter(t => t.length > 0);
+};
+
+// Función para calcular score de matching entre dos textos
+const calculateMatchScore = (searchText: string, productName: string): number => {
+  const searchNorm = normalizeText(searchText);
+  const productNorm = normalizeText(productName);
+  const searchTokens = tokenize(searchText);
+  const productTokens = tokenize(productName);
+
+  // 1. Match exacto normalizado = 100 puntos
+  if (searchNorm === productNorm) return 100;
+
+  // 2. Búsqueda está contenida en producto = 80 puntos
+  if (productNorm.includes(searchNorm)) return 80;
+
+  // 3. Producto está contenido en búsqueda = 70 puntos
+  if (searchNorm.includes(productNorm)) return 70;
+
+  // 4. Todos los tokens de búsqueda existen en producto = 60 puntos
+  const allTokensMatch = searchTokens.every(st => 
+    productTokens.some(pt => pt.includes(st) || st.includes(pt))
+  );
+  if (allTokensMatch && searchTokens.length > 0) return 60;
+
+  // 5. Al menos un token coincide significativamente (>= 3 caracteres) = 40 puntos
+  const significantMatch = searchTokens.some(st => 
+    st.length >= 3 && productTokens.some(pt => pt.includes(st) || st.includes(pt))
+  );
+  if (significantMatch) return 40;
+
+  // 6. Sin coincidencia
+  return 0;
+};
+
 // Función para extraer productos a agregar al carrito con personalizaciones
 const parseCartActions = (message: string): { 
   product: string; 
@@ -99,19 +147,26 @@ const getProductsByNames = async (productNames: string[]) => {
   
   const lowerNames = productNames.map(n => n.toLowerCase().trim());
 
-  // Buscar coincidencia exacta primero, luego parcial (case-insensitive)
+  // Buscar con sistema de scoring inteligente
   const matched = lowerNames.map(searchName => {
-    // Coincidencia exacta
-    let found = products.find(p => p.name.toLowerCase().trim() === searchName);
-    if (!found) {
-      // Coincidencia parcial (el nombre del producto está CONTENIDO en lo que María escribió o viceversa)
-      found = products.find(
-        p => p.name.toLowerCase().includes(searchName) || searchName.includes(p.name.toLowerCase())
-      );
+    // Calcular score para cada producto
+    const productsWithScore = products.map(p => ({
+      product: p,
+      score: calculateMatchScore(searchName, p.name)
+    }));
+
+    // Ordenar por score descendente
+    productsWithScore.sort((a, b) => b.score - a.score);
+
+    // Tomar el mejor match si tiene score > 0
+    const best = productsWithScore[0];
+    if (best && best.score > 0) {
+      console.log(`✅ Match: "${searchName}" → "${best.product.name}" (score: ${best.score})`);
+      return best.product;
+    } else {
+      console.log(`❌ Sin match para: "${searchName}" | Disponibles: ${products.map(p => p.name).slice(0, 5).join(', ')}...`);
+      return null;
     }
-    if (found) console.log(`✅ Match: "${searchName}" → "${found.name}"`);
-    else console.log(`❌ Sin match para: "${searchName}" | Disponibles: ${products.map(p => p.name).slice(0, 5).join(', ')}...`);
-    return found;
   }).filter(Boolean);
 
   // Retornar únicos
@@ -295,11 +350,22 @@ FORMATO DE MARCADORES (USA SOLO AL FINAL):
 [CONFIRM_ORDER]
 
 ⚠️ IMPORTANTE SOBRE MARCADORES:
-- NombreProducto: Nombre EXACTO del producto del menú
+- NombreProducto: Nombre del producto (el sistema es INTELIGENTE y encuentra el producto aunque escribas solo parte del nombre)
 - Cantidad: Número
 - Extras: SOLO ingredientes ADICIONALES pagados (Aguacate, Queso extra, Bacon)
 - Quitar: Ingredientes a remover (Cebolla, Tomate)
 - Notas: Comentarios especiales del cliente
+
+🧠 SISTEMA INTELIGENTE DE BÚSQUEDA:
+El sistema encuentra productos aunque NO escribas el nombre exacto. Ejemplos:
+- Usuario dice "coca" → Sistema encuentra "Coca-Cola 500ml" ✅
+- Usuario dice "cocacola" → Sistema encuentra "Coca-Cola 500ml" ✅
+- Usuario dice "aros" → Sistema encuentra "Aros de Cebolla" ✅
+- Usuario dice "doble queso" → Sistema encuentra "Doble Queso Deluxe" ✅
+- Usuario dice "smartburger clasica" → Sistema encuentra "SmartBurger Clásica" ✅
+
+💡 CONSEJO: Escribe como el usuario habla. Si dice "coca", escribe "coca" en el marcador.
+El sistema normalizará automáticamente (elimina acentos, guiones, mayúsculas).
 
 🔴 REGLAS DE PRODUCTOS:
 1. COMBOS: NO agregues la bebida como item separado (ya viene incluida)
@@ -782,17 +848,25 @@ María (responde de forma natural, cálida y conversacional, recordando TODO lo 
       }
       
       productsToAdd = cartActions.map(action => {
-        // Buscar por nombre exacto primero, luego case-insensitive
-        const actionNameLower = action.product.toLowerCase().trim();
-        const product = products.find(p => p.name === action.product)
-          || products.find(p => p.name.toLowerCase().trim() === actionNameLower)
-          || products.find(p => p.name.toLowerCase().includes(actionNameLower) || actionNameLower.includes(p.name.toLowerCase()));
+        // Buscar con sistema de scoring inteligente
+        const productsWithScore = products.map(p => ({
+          product: p,
+          score: calculateMatchScore(action.product, p.name)
+        }));
+
+        // Ordenar por score descendente
+        productsWithScore.sort((a, b) => b.score - a.score);
+
+        // Tomar el mejor match si tiene score > 0
+        const best = productsWithScore[0];
+        const product = (best && best.score > 0) ? best.product : null;
+
         if (!product) {
           console.log(`❌ Producto NO encontrado: "${action.product}"`);
           return null;
         }
         
-        console.log(`✅ Producto encontrado: "${product.name}" (ID: ${product.id})`);
+        console.log(`✅ Producto encontrado: "${product.name}" (ID: ${product.id}, score: ${best.score})`);
         
         // Incluir personalizaciones si existen
         const customizations: any = {};
