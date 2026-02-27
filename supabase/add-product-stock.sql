@@ -44,6 +44,7 @@ END $$;
 -- PASO 3: Función mejorada para descontar stock
 -- ============================================
 -- Esta función descuenta TANTO productos simples COMO ingredientes compuestos
+-- CORREGIDO: Todas las variables declaradas al inicio (sin bloques anidados)
 
 CREATE OR REPLACE FUNCTION auto_deduct_stock_on_order()
 RETURNS TRIGGER AS $$
@@ -52,11 +53,24 @@ DECLARE
   v_quantity_to_deduct DECIMAL;
   v_product_name VARCHAR(200);
   v_has_ingredients BOOLEAN;
+  v_new_stock INTEGER;
+  v_updated_stock DECIMAL;
+  v_extra_name TEXT;
+  v_extra_ingredient_id UUID;
+  v_extra_new_stock DECIMAL;
+  v_product_stock_before INTEGER;
+  v_product_stock_after INTEGER;
 BEGIN
   -- Obtener nombre del producto para logs
   SELECT name INTO v_product_name 
   FROM products 
   WHERE id = NEW.product_id;
+  
+  -- Si el producto no existe, salir (no fallar)
+  IF v_product_name IS NULL THEN
+    RAISE NOTICE '⚠️ [AUTO-DEDUCT] Producto no encontrado (ID: %)', NEW.product_id;
+    RETURN NEW;
+  END IF;
   
   RAISE NOTICE '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
   RAISE NOTICE '🛒 [AUTO-DEDUCT] Nueva orden: % x% (Order ID: %)', 
@@ -65,7 +79,7 @@ BEGIN
   -- ============================================
   -- A. DESCONTAR STOCK DEL PRODUCTO (si aplica)
   -- ============================================
-  -- Productos simples sin ingredientes (ej: bebidas ya envasadas)
+  -- Verificar si el producto tiene ingredientes
   SELECT EXISTS(
     SELECT 1 FROM product_ingredients 
     WHERE product_id = NEW.product_id
@@ -75,20 +89,38 @@ BEGIN
     -- Producto simple: descontar del stock del producto directamente
     RAISE NOTICE '📦 [AUTO-DEDUCT] Producto simple - Descontando % unidades', NEW.quantity;
     
+    -- Obtener stock ANTES
+    SELECT stock_quantity INTO v_product_stock_before
+    FROM products 
+    WHERE id = NEW.product_id;
+    
+    IF v_product_stock_before IS NULL THEN
+      RAISE NOTICE '⚠️ [AUTO-DEDUCT] Producto % NO tiene stock_quantity (NULL). Inicializando a 100...', v_product_name;
+      
+      UPDATE products
+      SET stock_quantity = 100
+      WHERE id = NEW.product_id;
+      
+      v_product_stock_before := 100;
+    END IF;
+    
+    RAISE NOTICE '   📊 Stock ANTES: %', v_product_stock_before;
+    
+    -- Descontar
     UPDATE products
     SET stock_quantity = GREATEST(stock_quantity - NEW.quantity, 0)
     WHERE id = NEW.product_id;
     
-    -- Verificar stock actualizado
-    DECLARE
-      v_new_stock INTEGER;
-    BEGIN
-      SELECT stock_quantity INTO v_new_stock 
-      FROM products 
-      WHERE id = NEW.product_id;
-      
-      RAISE NOTICE '✅ [AUTO-DEDUCT] Stock de % actualizado: %', v_product_name, v_new_stock;
-    END;
+    -- Verificar stock DESPUÉS
+    SELECT stock_quantity INTO v_product_stock_after
+    FROM products 
+    WHERE id = NEW.product_id;
+    
+    RAISE NOTICE '   📊 Stock DESPUÉS: % (descontado: %)', 
+      v_product_stock_after, 
+      v_product_stock_before - v_product_stock_after;
+    RAISE NOTICE '✅ [AUTO-DEDUCT] Stock de % actualizado exitosamente', v_product_name;
+    
   ELSE
     -- ============================================
     -- B. DESCONTAR INGREDIENTES (productos compuestos)
@@ -106,7 +138,7 @@ BEGIN
       WHERE pi.product_id = NEW.product_id
         AND pi.is_required = true
     LOOP
-      -- Calcular cuánto descontar (ingredientes por producto * cantidad pedida)
+      -- Calcular cuánto descontar
       v_quantity_to_deduct := v_ingredient_record.ingredient_qty_per_product * NEW.quantity;
       
       RAISE NOTICE '   🥬 [AUTO-DEDUCT] Ingrediente: %', v_ingredient_record.ingredient_name;
@@ -119,15 +151,11 @@ BEGIN
       WHERE id = v_ingredient_record.ingredient_id;
       
       -- Verificar stock actualizado
-      DECLARE
-        v_updated_stock DECIMAL;
-      BEGIN
-        SELECT stock_quantity INTO v_updated_stock
-        FROM ingredients
-        WHERE id = v_ingredient_record.ingredient_id;
-        
-        RAISE NOTICE '      ✅ Nuevo stock: %', v_updated_stock;
-      END;
+      SELECT stock_quantity INTO v_updated_stock
+      FROM ingredients
+      WHERE id = v_ingredient_record.ingredient_id;
+      
+      RAISE NOTICE '      ✅ Nuevo stock: %', v_updated_stock;
     END LOOP;
   END IF;
   
@@ -140,48 +168,46 @@ BEGIN
     
     RAISE NOTICE '🌟 [AUTO-DEDUCT] Customizaciones detectadas...';
     
-    DECLARE
-      v_extra_name TEXT;
-      v_extra_ingredient_id UUID;
-    BEGIN
-      -- Iterar sobre cada extra agregado
-      FOR v_extra_name IN 
-        SELECT jsonb_array_elements_text(NEW.customizations::jsonb -> 'added')
-      LOOP
-        -- Buscar el ingrediente por nombre
-        SELECT id INTO v_extra_ingredient_id
-        FROM ingredients
-        WHERE LOWER(name) = LOWER(v_extra_name)
-        LIMIT 1;
+    -- Iterar sobre cada extra agregado
+    FOR v_extra_name IN 
+      SELECT jsonb_array_elements_text(NEW.customizations::jsonb -> 'added')
+    LOOP
+      -- Buscar el ingrediente por nombre
+      SELECT id INTO v_extra_ingredient_id
+      FROM ingredients
+      WHERE LOWER(name) = LOWER(v_extra_name)
+      LIMIT 1;
+      
+      IF v_extra_ingredient_id IS NOT NULL THEN
+        RAISE NOTICE '   🌟 [AUTO-DEDUCT] Extra: % - Descontando % unidades', 
+          v_extra_name, NEW.quantity;
         
-        IF v_extra_ingredient_id IS NOT NULL THEN
-          RAISE NOTICE '   🌟 [AUTO-DEDUCT] Extra: % - Descontando % unidades', 
-            v_extra_name, NEW.quantity;
-          
-          UPDATE ingredients
-          SET stock_quantity = GREATEST(stock_quantity - NEW.quantity, 0)
-          WHERE id = v_extra_ingredient_id;
-          
-          DECLARE
-            v_extra_new_stock DECIMAL;
-          BEGIN
-            SELECT stock_quantity INTO v_extra_new_stock
-            FROM ingredients
-            WHERE id = v_extra_ingredient_id;
-            
-            RAISE NOTICE '      ✅ Stock de % actualizado: %', v_extra_name, v_extra_new_stock;
-          END;
-        ELSE
-          RAISE NOTICE '   ⚠️ [AUTO-DEDUCT] Extra % no encontrado en ingredientes', v_extra_name;
-        END IF;
-      END LOOP;
-    END;
+        UPDATE ingredients
+        SET stock_quantity = GREATEST(stock_quantity - NEW.quantity, 0)
+        WHERE id = v_extra_ingredient_id;
+        
+        SELECT stock_quantity INTO v_extra_new_stock
+        FROM ingredients
+        WHERE id = v_extra_ingredient_id;
+        
+        RAISE NOTICE '      ✅ Stock de % actualizado: %', v_extra_name, v_extra_new_stock;
+      ELSE
+        RAISE NOTICE '   ⚠️ [AUTO-DEDUCT] Extra % no encontrado en ingredientes', v_extra_name;
+      END IF;
+    END LOOP;
   END IF;
   
   RAISE NOTICE '✅ [AUTO-DEDUCT] Descuento completado para %', v_product_name;
   RAISE NOTICE '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
   
   RETURN NEW;
+  
+EXCEPTION
+  WHEN OTHERS THEN
+    -- Si hay cualquier error, no fallar la inserción de order_items
+    RAISE WARNING '❌ [AUTO-DEDUCT] ERROR en trigger: % (SQLSTATE: %)', SQLERRM, SQLSTATE;
+    RAISE NOTICE '⚠️ [AUTO-DEDUCT] La orden se creó pero el stock NO se descontó';
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
