@@ -41,24 +41,25 @@ if (!bestSellers) {
 }
 ```
 
-### 2. Límite de Historial de Chat
+### 2. Límite de Historial de Chat ⚠️ ACTUALIZADO
 
-**¿Qué hace?**
-Solo envía los últimos 10 mensajes a Gemini (antes: todos los mensajes).
+**IMPORTANTE:** Este sistema fue **reemplazado por el sistema de perfiles de usuario persistentes**.
 
-**Impacto:**
-- Conversación de 50 mensajes: **5000 → 1000 tokens** (ahorro 80%)
-- Mantiene contexto reciente sin perder calidad
+En lugar de limitar el historial, ahora el sistema:
+- Guarda preferencias del usuario en base de datos
+- Aprende automáticamente gustos (nunca pide, siempre pide, etc.)
+- Usa cache inteligente para perfiles (5 min)
+- Sin necesidad de enviar historial completo repetidamente
 
-**Código:**
-```typescript
-// Antes
-const conversationHistory = messages.map(...).join();
+**Ver:** [SISTEMA_PERFILES_USUARIO.md](SISTEMA_PERFILES_USUARIO.md) para detalles completos.
 
-// Ahora (últimos 10 solamente)
-const recentMessages = messages.slice(-10);
-const conversationHistory = recentMessages.map(...).join();
-```
+~~**¿Qué hace?**~~
+~~Solo envía los últimos 10 mensajes a Gemini (antes: todos los mensajes).~~
+
+**Nuevo sistema:**
+- Primera vez: Query perfil de usuario (cache 5 min)
+- Siguientes llamadas: Perfil desde cache
+- Conversación natural sin límites artificiales
 
 ### 3. Modo DEBUG con Contexto Reducido
 

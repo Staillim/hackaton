@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { getBestSellingProducts, saveChatMessage, getChatHistory, getUserPreferences, analyzeUserPatterns, getSmartRecommendations, getCurrentTimeContext, getLowStockProducts } from '@/lib/supabase';
+import { getBestSellingProducts, saveChatMessage, getChatHistory, getUserPreferences, analyzeUserPatterns, getSmartRecommendations, getCurrentTimeContext, getLowStockProducts, getUserProfile } from '@/lib/supabase';
 import { createClient } from '@supabase/supabase-js';
 import { cache } from '@/lib/cache';
 
@@ -113,24 +113,39 @@ const getEnhancedSystemPrompt = async (sessionId: string, userEmail?: string) =>
     ? `\nPreferencias: ${preferences.likes || '-'} | Alergias: ${preferences.allergies || 'ninguna'}`
     : '';
 
-  // ⚡ CACHE: Análisis de comportamiento (cache 5 min) - LAZY LOADING
-  let userPatterns: any = null;
+  // ⚡ CACHE: Análisis de comportamiento (cache 5 min) - Sistema de perfil persistente
+  let userProfile: any = null;
   let userContext = '';
   if (userEmail) {
-    userPatterns = cache.get(`patterns_${userEmail}`);
-    if (!userPatterns) {
-      userPatterns = await analyzeUserPatterns(userEmail).catch(() => null);
-      if (userPatterns) {
-        cache.set(`patterns_${userEmail}`, userPatterns, 5);
+    userProfile = cache.get(`profile_${userEmail}`);
+    if (!userProfile) {
+      userProfile = await getUserProfile(userEmail).catch(() => null);
+      if (userProfile) {
+        cache.set(`profile_${userEmail}`, userProfile, 5);
       }
     }
     
-    // Solo incluir si tiene historial real (optimización)
-    if (userPatterns && userPatterns.hasHistory && userPatterns.totalOrders > 0) {
-      userContext = `\n\n🧠 ANÁLISIS:
-- Órdenes: ${userPatterns.totalOrders}
-- Favoritos: ${userPatterns.favoriteProducts.slice(0, 2).join(', ') || 'ninguno'}
-- Siempre quita: ${userPatterns.commonRemovals.slice(0, 2).join(', ') || 'nada'}`;
+    // Crear perfil visual si tiene historial
+    if (userProfile && userProfile.has_history && userProfile.total_orders > 0) {
+      const neverOrders = userProfile.never_orders && userProfile.never_orders.length > 0 
+        ? userProfile.never_orders.join(', ') 
+        : 'Nada';
+      const alwaysOrders = userProfile.always_orders && userProfile.always_orders.length > 0 
+        ? userProfile.always_orders.join(', ') 
+        : 'Nada especial';
+      
+      userContext = `\n\n👤 PERFIL DEL USUARIO:
+- Promedio de gasto: $${userProfile.average_order_value}
+- Día favorito: ${userProfile.favorite_day || 'No definido'}
+- Hora favorita: ${userProfile.favorite_time || 'No definida'}
+- Nunca pide: ${neverOrders}
+- Siempre pide: ${alwaysOrders}
+
+💡 USA ESTE PERFIL PARA:
+1. Sugerir productos en su rango de gasto
+2. Mencionar "veo que no te gusta ${neverOrders}" cuando sea relevante
+3. Ofrecer automáticamente "${alwaysOrders}" en sus pedidos
+4. Personalizar recomendaciones según sus gustos`;
     }
   }
 
@@ -379,19 +394,13 @@ export async function POST(request: NextRequest) {
       throw new Error('No hay modelos Gemini disponibles con quota');
     }
 
-    // 🎯 OPTIMIZACIÓN: Limitar historial a últimos 10 mensajes (ahorra tokens)
-    const recentMessages = messages.slice(-10);
-    const conversationHistory = recentMessages
+    // Construir el historial completo de conversación (sin límites)
+    const conversationHistory = messages
       .map((msg: any) => `${msg.role === 'user' ? 'Cliente' : 'María'}: ${msg.content}`)
       .join('\n\n');
 
     // Obtener el último mensaje del usuario
     const lastUserMessage = messages[messages.length - 1]?.content || '';
-    
-    // 📊 Logging de uso (para monitoreo)
-    if (messages.length > 10) {
-      console.log(`⚠️ Historial truncado: ${messages.length} → 10 mensajes (ahorro de ~${(messages.length - 10) * 100} tokens)`);
-    }
 
     console.log('📝 Historial de conversación:', conversationHistory.length, 'caracteres');
     console.log('💭 Último mensaje:', lastUserMessage);

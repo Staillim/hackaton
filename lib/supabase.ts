@@ -533,3 +533,58 @@ export const getCurrentTimeContext = () => {
   if (hour >= 18 && hour < 22) return 'evening';
   return 'night';
 };
+
+// ============================================
+// PERFIL DE USUARIO MEJORADO
+// ============================================
+
+export interface UserProfile {
+  user_email: string;
+  total_orders: number;
+  average_order_value: number;
+  favorite_products?: string[];
+  favorite_day?: string;
+  favorite_time?: string;
+  never_orders?: string[];
+  always_orders?: string[];
+  preferred_order_time?: string;
+  common_customizations?: any;
+  last_order_date?: string;
+  has_history: boolean;
+}
+
+// Obtener perfil completo del usuario
+export const getUserProfile = async (userEmail: string): Promise<UserProfile | null> => {
+  try {
+    const { data, error } = await supabase
+      .rpc('get_user_profile', { p_user_email: userEmail });
+
+    if (error) {
+      console.error('Error fetching user profile:', error);
+      return null;
+    }
+
+    return data as UserProfile;
+  } catch (error) {
+    console.error('Error in getUserProfile:', error);
+    return null;
+  }
+};
+
+// Analizar y actualizar perfil del usuario
+export const analyzeAndUpdateUserProfile = async (userEmail: string) => {
+  try {
+    const { data, error } = await supabase
+      .rpc('analyze_and_update_user_profile', { p_user_email: userEmail });
+
+    if (error) {
+      console.error('Error analyzing user profile:', error);
+      return null;
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error in analyzeAndUpdateUserProfile:', error);
+    return null;
+  }
+};
