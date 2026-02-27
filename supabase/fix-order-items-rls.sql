@@ -82,21 +82,13 @@ DROP POLICY IF EXISTS "Allow public update" ON chat_conversations;
 DROP POLICY IF EXISTS "Anyone can create conversations" ON chat_conversations;
 DROP POLICY IF EXISTS "Anyone can view conversations" ON chat_conversations;
 DROP POLICY IF EXISTS "Anyone can update conversations" ON chat_conversations;
-Ejecuta esto para ver las políticas de chat_conversations:
--- SELECT * FROM pg_policies WHERE tablename = 'chat_conversations';
 
--- ============================================
--- VERIFICACIÓN: Probar inserciones
--- ============================================
--- Después de ejecutar este script:
--- 
--- Test 1: Crear orden desde el chat
--- ✅ Si ves: "[createOrderItems] Items insertados exitosamente" → FUNCIONA
--- ❌ Si ves: "RLS bloqueando INSERT" → Algo salió mal
--- 
--- Test 2: Enviar mensaje en el chat
--- ✅ Si ves: "✅ Mensajes guardados en BD" → FUNCIONA
--- ❌ Si ves: "new row violates row-level security policy" → Algo salió mal
+-- Cualquiera puede CREAR conversaciones (necesario para chat sin login)
+CREATE POLICY "Anyone can create conversations"
+  ON chat_conversations FOR INSERT
+  WITH CHECK (true);
+
+-- Cualquiera puede VER conversaciones (necesario para admin)
 CREATE POLICY "Anyone can view conversations"
   ON chat_conversations FOR SELECT
   USING (true);
@@ -126,10 +118,18 @@ CREATE POLICY "Admins can delete conversations"
 -- Ejecuta esto para ver las políticas de order_items:
 -- SELECT * FROM pg_policies WHERE tablename = 'order_items';
 
+-- Ejecuta esto para ver las políticas de chat_conversations:
+-- SELECT * FROM pg_policies WHERE tablename = 'chat_conversations';
+
 -- ============================================
--- VERIFICACIÓN: Probar inserción
+-- VERIFICACIÓN: Probar inserciones
 -- ============================================
--- Después de ejecutar este script, prueba crear una orden desde el chat
--- Revisa la consola del navegador (F12) para ver los logs:
+-- Después de ejecutar este script:
+-- 
+-- Test 1: Crear orden desde el chat
 -- ✅ Si ves: "[createOrderItems] Items insertados exitosamente" → FUNCIONA
--- ❌ Si ves: "RLS bloqueando INSERT" → Contacta soporte de Supabase
+-- ❌ Si ves: "RLS bloqueando INSERT" → Algo salió mal
+-- 
+-- Test 2: Enviar mensaje en el chat
+-- ✅ Si ves: "✅ Mensajes guardados en BD" → FUNCIONA
+-- ❌ Si ves: "new row violates row-level security policy" → Algo salió mal
