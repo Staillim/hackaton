@@ -377,12 +377,19 @@ export async function POST(request: NextRequest) {
       // Si no hay ningún 'user' en el historial o empieza con 'model', ajustar
       const geminiHistory = firstUserIdx === -1 ? [] : rawHistory.slice(firstUserIdx);
 
+      // Capturar los mensajes 'model' que fueron eliminados del inicio (ej: alerta proactiva)
+      // y añadirlos al system prompt para que Max mantenga el contexto
+      const strippedLeadingMessages = firstUserIdx > 0 ? rawHistory.slice(0, firstUserIdx) : [];
+      const priorContextAddendum = strippedLeadingMessages.length > 0
+        ? `\n\n---\nCONTEXTO PREVIO QUE YO (MAX) YA INFORMÉ AL ADMIN AL INICIO DE ESTA SESIÓN:\n${strippedLeadingMessages.map(m => m.parts[0].text).join('\n')}\n---\nTen en cuenta este contexto al interpretar los mensajes del admin que siguen.`
+        : '';
+
       console.log('🤖 Iniciando chat con Gemini (gemini-2.5-pro)...');
 
       // Crear modelo con herramientas (usando modelo potente para function calling)
       const model = genAI.getGenerativeModel({
         model: 'gemini-2.5-flash',
-        systemInstruction: systemContext,
+        systemInstruction: systemContext + priorContextAddendum,
         tools: [{ functionDeclarations: MAX_TOOLS as any }],
       });
 
