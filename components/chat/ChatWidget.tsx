@@ -97,18 +97,12 @@ export default function ChatWidget() {
 
       await createOrderItems(orderItems);
 
-      toast.success(`🎉 ¡Orden #${order.order_number} confirmada!`, {
+      toast.success(`🎉 ¡Orden #${order.order_number} confirmada y enviada a cocina!`, {
         duration: 5000,
         icon: '✅',
       });
       
       clearCart();
-
-      // Abrir carrito para ver el estado
-      setTimeout(() => {
-        const event = new CustomEvent('openCart');
-        window.dispatchEvent(event);
-      }, 1500);
 
     } catch (error) {
       console.error('Error creating order from chat:', error);

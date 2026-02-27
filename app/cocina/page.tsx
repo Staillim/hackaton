@@ -217,16 +217,47 @@ function CocinaDashboard() {
                 </div>
 
                 {/* Items */}
-                <div className="mb-4 space-y-2">
+                <div className="mb-4 space-y-3">
                   {order.items?.map((item, idx) => (
-                    <div key={idx} className="text-sm">
-                      <p className="text-white">
-                        {item.quantity}x {item.product_id}
+                    <div key={idx} className="bg-zinc-800/50 rounded-lg p-3 border border-zinc-700">
+                      <p className="text-white font-semibold">
+                        {item.quantity}x {item.product?.name || 'Producto'}
                       </p>
+                      
+                      {/* Customizaciones */}
                       {item.customizations && (
-                        <p className="text-gray-400 text-xs ml-4">
-                          {JSON.stringify(item.customizations)}
-                        </p>
+                        <div className="mt-2 space-y-1 text-xs">
+                          {item.customizations.removed && item.customizations.removed.length > 0 && (
+                            <div className="flex items-start gap-2">
+                              <span className="text-red-400">➖ Sin:</span>
+                              <span className="text-gray-300">
+                                {Array.isArray(item.customizations.removed)
+                                  ? item.customizations.removed.map((r: any) => 
+                                      typeof r === 'string' ? r : r.ingredient?.name || r
+                                    ).join(', ')
+                                  : item.customizations.removed}
+                              </span>
+                            </div>
+                          )}
+                          {item.customizations.added && item.customizations.added.length > 0 && (
+                            <div className="flex items-start gap-2">
+                              <span className="text-green-400">➕ Extra:</span>
+                              <span className="text-gray-300">
+                                {Array.isArray(item.customizations.added)
+                                  ? item.customizations.added.map((a: any) => 
+                                      typeof a === 'string' ? a : a.ingredient?.name || a
+                                    ).join(', ')
+                                  : item.customizations.added}
+                              </span>
+                            </div>
+                          )}
+                          {item.customizations.notes && (
+                            <div className="flex items-start gap-2">
+                              <span className="text-blue-400">📝 Nota:</span>
+                              <span className="text-gray-300">{item.customizations.notes}</span>
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
                   ))}
