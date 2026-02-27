@@ -13,6 +13,16 @@ export const supabase = createClient(
   supabaseAnonKey || 'placeholder-key'
 );
 
+// Cliente admin con service_role key — bypasa RLS para operaciones de escritura server-side
+// NEXT_PUBLIC_* nunca está disponible aquí, así que en el cliente usará null → fallback a supabase anon
+const getAdminClient = () => {
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!serviceKey || typeof window !== 'undefined') return supabase;
+  return createClient(supabaseUrl || 'https://placeholder.supabase.co', serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+};
+
 // Helper functions for common queries
 export const getProducts = async (featured?: boolean) => {
   let query = supabase
@@ -143,7 +153,7 @@ export const getInventoryAlerts = async (resolved?: boolean) => {
 
         if (toResolve.length > 0) {
           console.log(`🔔 [getInventoryAlerts] Resolviendo ${toResolve.length} alerta(s) obsoletas...`);
-          await supabase
+          await getAdminClient()
             .from('inventory_alerts')
             .update({ resolved: true, resolved_at: new Date().toISOString() })
             .in('id', toResolve);
@@ -170,7 +180,7 @@ export const getInventoryAlerts = async (resolved?: boolean) => {
 };
 
 export const updateIngredientStock = async (id: string, quantity: number) => {
-  const { data, error } = await supabase
+  const { data, error } = await getAdminClient()
     .from('ingredients')
     .update({ stock_quantity: quantity })
     .eq('id', id)
@@ -418,7 +428,7 @@ export const getUserOrders = async (userEmail: string) => {
 
 // Actualizar estado de una orden
 export const updateOrderStatus = async (orderId: string, status: string) => {
-  const { data, error } = await supabase
+  const { data, error } = await getAdminClient()
     .from('orders')
     .update({ status, updated_at: new Date().toISOString() })
     .eq('id', orderId)
@@ -686,7 +696,7 @@ const calculateDashboardMetricsManual = async () => {
 
 // Actualizar stock de un producto
 export const updateProductStock = async (productId: string, quantity: number) => {
-  const { data, error } = await supabase
+  const { data, error } = await getAdminClient()
     .from('products')
     .update({ stock_quantity: quantity })
     .eq('id', productId)
@@ -793,7 +803,7 @@ export const updateProduct = async (id: string, updates: {
   preparation_time?: number; image_url?: string; category_id?: string;
   stock_quantity?: number;
 }) => {
-  const { data, error } = await supabase
+  const { data, error } = await getAdminClient()
     .from('products')
     .update({ ...updates, updated_at: new Date().toISOString() })
     .eq('id', id)
@@ -809,7 +819,7 @@ export const createProduct = async (product: {
   preparation_time: number; image_url?: string; category_id?: string;
   stock_quantity?: number;
 }) => {
-  const { data, error } = await supabase
+  const { data, error } = await getAdminClient()
     .from('products')
     .insert(product)
     .select('*, category:categories(*)')
@@ -819,14 +829,14 @@ export const createProduct = async (product: {
 };
 
 export const deleteProduct = async (id: string) => {
-  const { error } = await supabase.from('products').delete().eq('id', id);
+  const { error } = await getAdminClient().from('products').delete().eq('id', id);
   if (error) throw error;
 };
 
 export const addProductIngredient = async (productId: string, ingredientId: string, opts: {
   quantity: number; is_required: boolean; is_removable: boolean;
 }) => {
-  const { data, error } = await supabase
+  const { data, error } = await getAdminClient()
     .from('product_ingredients')
     .insert({ product_id: productId, ingredient_id: ingredientId, ...opts })
     .select('*, ingredient:ingredients(*)')
@@ -836,7 +846,7 @@ export const addProductIngredient = async (productId: string, ingredientId: stri
 };
 
 export const deleteProductIngredient = async (id: string) => {
-  const { error } = await supabase.from('product_ingredients').delete().eq('id', id);
+  const { error } = await getAdminClient().from('product_ingredients').delete().eq('id', id);
   if (error) throw error;
 };
 
@@ -858,7 +868,7 @@ export const createIngredient = async (ingredient: {
   available?: boolean;
   is_allergen?: boolean;
 }) => {
-  const { data, error } = await supabase
+  const { data, error } = await getAdminClient()
     .from('ingredients')
     .insert({
       name: ingredient.name,
@@ -879,7 +889,7 @@ export const updateIngredient = async (id: string, updates: { stock_quantity?: n
   console.log(`🔄 [updateIngredient] Iniciando actualización:`, { id, updates });
   
   try {
-    const { data, error } = await supabase
+    const { data, error } = await getAdminClient()
       .from('ingredients')
       .update({ ...updates, updated_at: new Date().toISOString() })
       .eq('id', id)
@@ -916,7 +926,7 @@ async function autoResolveAlerts(ingredientId: string, currentStock: number, min
     if (currentStock > minAlert) {
       console.log(`🔔 [autoResolveAlerts] Stock normalizado (${currentStock} > ${minAlert}), resolviendo alertas...`);
       
-      const { data, error } = await supabase
+      const { data, error } = await getAdminClient()
         .from('inventory_alerts')
         .update({ 
           resolved: true, 
@@ -942,7 +952,7 @@ async function autoResolveAlerts(ingredientId: string, currentStock: number, min
  * Marcar una alerta específica como resuelta
  */
 export const resolveAlert = async (alertId: string) => {
-  const { data, error } = await supabase
+  const { data, error } = await getAdminClient()
     .from('inventory_alerts')
     .update({ 
       resolved: true, 
@@ -960,7 +970,7 @@ export const resolveAlert = async (alertId: string) => {
  * Resolver todas las alertas de un ingrediente
  */
 export const resolveAlertsByIngredient = async (ingredientId: string) => {
-  const { data, error } = await supabase
+  const { data, error } = await getAdminClient()
     .from('inventory_alerts')
     .update({ 
       resolved: true, 
@@ -989,7 +999,7 @@ export const updatePromotion = async (id: string, updates: Partial<{
   name: string; description: string; discount_type: string; discount_value: number;
   min_purchase: number; start_date: string; end_date: string; active: boolean; max_uses: number;
 }>) => {
-  const { data, error } = await supabase
+  const { data, error } = await getAdminClient()
     .from('promotions')
     .update({ ...updates, updated_at: new Date().toISOString() })
     .eq('id', id)
@@ -1003,7 +1013,7 @@ export const createPromotion = async (promo: {
   name: string; description?: string; discount_type: 'percentage' | 'fixed' | 'combo';
   discount_value: number; min_purchase: number; start_date: string; end_date: string; active: boolean; max_uses?: number;
 }) => {
-  const { data, error } = await supabase
+  const { data, error } = await getAdminClient()
     .from('promotions')
     .insert({ ...promo, current_uses: 0 })
     .select()
@@ -1013,7 +1023,7 @@ export const createPromotion = async (promo: {
 };
 
 export const deletePromotion = async (id: string) => {
-  const { error } = await supabase.from('promotions').delete().eq('id', id);
+  const { error } = await getAdminClient().from('promotions').delete().eq('id', id);
   if (error) throw error;
 };
 
@@ -1027,7 +1037,7 @@ export const getUserProfiles = async () => {
 };
 
 export const updateUserRole = async (userId: string, role: string) => {
-  const { data, error } = await supabase
+  const { data, error } = await getAdminClient()
     .from('user_profiles')
     .update({ role, updated_at: new Date().toISOString() })
     .eq('id', userId)
