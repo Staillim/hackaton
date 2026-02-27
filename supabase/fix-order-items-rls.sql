@@ -1,8 +1,8 @@
 -- ============================================
--- FIX: Políticas RLS para order_items y orders
+-- FIX: Políticas RLS para orders, order_items y chat_conversations
 -- ============================================
--- PROBLEMA: Los items de las órdenes no se guardan porque
--- order_items tiene RLS habilitado pero SIN políticas de INSERT
+-- PROBLEMA: Tablas tienen RLS habilitado pero SIN políticas de INSERT
+-- RESULTADO: Inserciones fallan con "row-level security policy violation"
 -- ============================================
 
 -- ======== ÓRDENES PRINCIPALES (orders) ========
@@ -65,6 +65,50 @@ CREATE POLICY "Anyone can update order items"
 -- Solo admins pueden ELIMINAR items
 CREATE POLICY "Admins can delete order items"
   ON order_items FOR DELETE
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles 
+      WHERE id = auth.uid() 
+      AND role = 'admin'
+    )
+  );
+
+-- ======== CONVERSACIONES DE CHAT (chat_conversations) ========
+
+-- Eliminar políticas obsoletas
+DROP POLICY IF EXISTS "Allow public insert" ON chat_conversations;
+DROP POLICY IF EXISTS "Allow public select" ON chat_conversations;
+DROP POLICY IF EXISTS "Allow public update" ON chat_conversations;
+DROP POLICY IF EXISTS "Anyone can create conversations" ON chat_conversations;
+DROP POLICY IF EXISTS "Anyone can view conversations" ON chat_conversations;
+DROP POLICY IF EXISTS "Anyone can update conversations" ON chat_conversations;
+Ejecuta esto para ver las políticas de chat_conversations:
+-- SELECT * FROM pg_policies WHERE tablename = 'chat_conversations';
+
+-- ============================================
+-- VERIFICACIÓN: Probar inserciones
+-- ============================================
+-- Después de ejecutar este script:
+-- 
+-- Test 1: Crear orden desde el chat
+-- ✅ Si ves: "[createOrderItems] Items insertados exitosamente" → FUNCIONA
+-- ❌ Si ves: "RLS bloqueando INSERT" → Algo salió mal
+-- 
+-- Test 2: Enviar mensaje en el chat
+-- ✅ Si ves: "✅ Mensajes guardados en BD" → FUNCIONA
+-- ❌ Si ves: "new row violates row-level security policy" → Algo salió mal
+CREATE POLICY "Anyone can view conversations"
+  ON chat_conversations FOR SELECT
+  USING (true);
+
+-- Cualquiera puede ACTUALIZAR conversaciones (UPSERT pattern)
+CREATE POLICY "Anyone can update conversations"
+  ON chat_conversations FOR UPDATE
+  USING (true);
+
+-- Solo admins pueden ELIMINAR conversaciones
+CREATE POLICY "Admins can delete conversations"
+  ON chat_conversations FOR DELETE
   USING (
     EXISTS (
       SELECT 1 FROM user_profiles 

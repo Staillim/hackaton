@@ -95,6 +95,8 @@ const getProductsByNames = async (productNames: string[]) => {
   }
 
   const products = allProducts || [];
+  console.log('🗂️ TODOS los productos activos en BD:', products.map(p => p.name).join(', '));
+  
   const lowerNames = productNames.map(n => n.toLowerCase().trim());
 
   // Buscar coincidencia exacta primero, luego parcial (case-insensitive)
@@ -108,7 +110,7 @@ const getProductsByNames = async (productNames: string[]) => {
       );
     }
     if (found) console.log(`✅ Match: "${searchName}" → "${found.name}"`);
-    else console.log(`❌ Sin match para: "${searchName}"`);
+    else console.log(`❌ Sin match para: "${searchName}" | Disponibles: ${products.map(p => p.name).slice(0, 5).join(', ')}...`);
     return found;
   }).filter(Boolean);
 
