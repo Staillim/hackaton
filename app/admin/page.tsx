@@ -574,6 +574,9 @@ function MaxChatSection({
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Ref para detectar si el alert_count sube durante la sesión
+  const prevCriticalRef = useRef<number | null>(null);
+  const sessionStartRef = useRef<number>(Date.now());
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -582,6 +585,55 @@ function MaxChatSection({
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // ── Alerta proactiva al montar ──────────────────────────────────────────────
+  useEffect(() => {
+    const checkAlerts = async () => {
+      try {
+        const res = await fetch('/api/admin/alerts');
+        const data = await res.json();
+        if (data.hasAlerts && data.message) {
+          setMessages([
+            {
+              role: 'assistant',
+              content: data.message,
+              timestamp: new Date(),
+            },
+          ]);
+        }
+      } catch {
+        // silencioso — si falla no bloqueamos el chat
+      }
+    };
+    // Pequeño delay para que el componente esté visible antes del primer mensaje
+    const t = setTimeout(checkAlerts, 800);
+    return () => clearTimeout(t);
+  }, []); // solo al montar
+
+  // ── Alerta reactiva: cuando algo nuevo se agota durante la sesión ───────────
+  useEffect(() => {
+    // Ignorar el primer render
+    if (prevCriticalRef.current === null) {
+      prevCriticalRef.current = criticalAlertsCount;
+      return;
+    }
+    const prev = prevCriticalRef.current as number;
+    prevCriticalRef.current = criticalAlertsCount;
+
+    // Solo notificar si el conteo subió y han pasado más de 30s desde el inicio
+    const elapsed = Date.now() - sessionStartRef.current;
+    if (criticalAlertsCount > prev && elapsed > 30_000) {
+      const diff = criticalAlertsCount - prev;
+      setMessages(msgs => [
+        ...msgs,
+        {
+          role: 'assistant' as const,
+          content: `🚨 Alerta en tiempo real: ${diff} elemento${diff !== 1 ? 's' : ''} acaba${diff === 1 ? '' : 'n'} de quedarse sin stock. Escribe "analiza el stock" para ver el detalle o dime cómo gestionar esto.`,
+          timestamp: new Date(),
+        },
+      ]);
+    }
+  }, [criticalAlertsCount]);
 
   const sendMessage = async (text: string) => {
     if (!text.trim() || loading) return;
