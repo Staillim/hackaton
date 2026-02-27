@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft, Plus, Pencil, X, Check, Star, StarOff,
   Eye, EyeOff, Loader2, Package, Search, Trash2, ChevronDown,
+  AlertTriangle, PackageMinus,
 } from 'lucide-react';
 import Link from 'next/link';
 import {
@@ -24,7 +25,17 @@ export default function ProductsPage() {
   );
 }
 
-type Tab = 'todos' | 'activos' | 'inactivos' | 'destacados';
+type Tab = 'todos' | 'activos' | 'inactivos' | 'destacados' | 'bajo_stock';
+
+// Stock thresholds
+const STOCK_MIN = 5;  // warning
+const STOCK_OUT = 0;  // critical
+
+function getStockStatus(qty: number) {
+  if (qty <= STOCK_OUT) return 'out';
+  if (qty <= STOCK_MIN) return 'low';
+  return 'ok';
+}
 
 function ProductsAdmin() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -78,14 +89,18 @@ function ProductsAdmin() {
     if (tab === 'activos') return p.active;
     if (tab === 'inactivos') return !p.active;
     if (tab === 'destacados') return p.featured;
+    if (tab === 'bajo_stock') return getStockStatus(p.stock_quantity ?? 0) !== 'ok';
     return true;
   });
+
+  const lowStockCount = products.filter(p => getStockStatus(p.stock_quantity ?? 0) !== 'ok').length;
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'todos', label: `Todos (${products.length})` },
     { key: 'activos', label: `Activos (${products.filter(p => p.active).length})` },
     { key: 'inactivos', label: `Inactivos (${products.filter(p => !p.active).length})` },
     { key: 'destacados', label: `Destacados (${products.filter(p => p.featured).length})` },
+    { key: 'bajo_stock', label: `⚠️ Bajo stock (${lowStockCount})` },
   ];
 
   return (
@@ -110,6 +125,50 @@ function ProductsAdmin() {
             <Plus className="w-4 h-4" /> Nuevo Producto
           </button>
         </div>
+
+        {/* Stock Alert Banner */}
+        {lowStockCount > 0 && (
+          <div className={`mb-6 rounded-xl border px-5 py-4 flex items-start gap-3 ${
+            products.some(p => getStockStatus(p.stock_quantity ?? 0) === 'out')
+              ? 'bg-red-900/20 border-red-700/50'
+              : 'bg-yellow-900/20 border-yellow-700/50'
+          }`}>
+            <AlertTriangle className={`w-5 h-5 mt-0.5 flex-shrink-0 ${
+              products.some(p => getStockStatus(p.stock_quantity ?? 0) === 'out') ? 'text-red-400' : 'text-yellow-400'
+            }`} />
+            <div>
+              <p className="text-white font-semibold text-sm">
+                {products.filter(p => getStockStatus(p.stock_quantity ?? 0) === 'out').length > 0 && (
+                  <span className="text-red-400">
+                    {products.filter(p => getStockStatus(p.stock_quantity ?? 0) === 'out').length} sin stock
+                  </span>
+                )}
+                {products.filter(p => getStockStatus(p.stock_quantity ?? 0) === 'out').length > 0 &&
+                  products.filter(p => getStockStatus(p.stock_quantity ?? 0) === 'low').length > 0 && ' · '}
+                {products.filter(p => getStockStatus(p.stock_quantity ?? 0) === 'low').length > 0 && (
+                  <span className="text-yellow-400">
+                    {products.filter(p => getStockStatus(p.stock_quantity ?? 0) === 'low').length} con stock bajo
+                  </span>
+                )}
+              </p>
+              <p className="text-gray-400 text-xs mt-0.5">
+                {[...products.filter(p => getStockStatus(p.stock_quantity ?? 0) === 'out'),
+                  ...products.filter(p => getStockStatus(p.stock_quantity ?? 0) === 'low')]
+                  .slice(0, 5)
+                  .map(p => p.name)
+                  .join(', ')}
+                {lowStockCount > 5 ? ` y ${lowStockCount - 5} más` : ''}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setTab('bajo_stock')}
+              className="ml-auto text-xs text-gray-400 hover:text-white underline flex-shrink-0"
+            >
+              Ver todos
+            </button>
+          </div>
+        )}
 
         {/* Tabs + Search */}
         <div className="flex flex-col sm:flex-row gap-4 mb-6">
@@ -158,6 +217,7 @@ function ProductsAdmin() {
                   <th className="px-4 py-4 text-gray-400 text-sm font-medium hidden md:table-cell">Categoría</th>
                   <th className="px-4 py-4 text-gray-400 text-sm font-medium">Precio</th>
                   <th className="px-4 py-4 text-gray-400 text-sm font-medium hidden sm:table-cell">Cal.</th>
+                  <th className="px-4 py-4 text-gray-400 text-sm font-medium">Stock</th>
                   <th className="px-4 py-4 text-gray-400 text-sm font-medium text-center">Activo</th>
                   <th className="px-4 py-4 text-gray-400 text-sm font-medium text-center">Destacado</th>
                   <th className="px-4 py-4 text-gray-400 text-sm font-medium text-center">Editar</th>
@@ -191,6 +251,27 @@ function ProductsAdmin() {
                     </td>
                     <td className="px-4 py-4 hidden sm:table-cell">
                       <span className="text-gray-400 text-sm">{product.calories ?? '—'}</span>
+                    </td>
+                    <td className="px-4 py-4">
+                      {(() => {
+                        const qty = product.stock_quantity ?? 0;
+                        const status = getStockStatus(qty);
+                        return (
+                          <div className="flex items-center gap-1.5">
+                            {status === 'out' ? (
+                              <span className="inline-flex items-center gap-1 bg-red-600/20 text-red-400 border border-red-600/30 text-xs font-semibold px-2 py-1 rounded-full">
+                                <PackageMinus className="w-3 h-3" /> Sin stock
+                              </span>
+                            ) : status === 'low' ? (
+                              <span className="inline-flex items-center gap-1 bg-yellow-600/20 text-yellow-400 border border-yellow-600/30 text-xs font-semibold px-2 py-1 rounded-full">
+                                <AlertTriangle className="w-3 h-3" /> {qty} uds
+                              </span>
+                            ) : (
+                              <span className="text-gray-300 text-sm font-medium">{qty} uds</span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-4 text-center">
                       <button
@@ -267,6 +348,7 @@ function ProductFormModal({
     category_id: product?.category_id || '',
     active: product?.active ?? true,
     featured: product?.featured ?? false,
+    stock_quantity: (product?.stock_quantity ?? 0).toString(),
   });
   const [productIngredients, setProductIngredients] = useState<any[]>([]);
   const [loadingIngs, setLoadingIngs] = useState(!isNew);
@@ -308,6 +390,7 @@ function ProductFormModal({
         category_id: form.category_id || undefined,
         active: form.active,
         featured: form.featured,
+        stock_quantity: parseInt(form.stock_quantity) || 0,
       };
       if (isNew) {
         await createProduct(payload);
@@ -419,8 +502,8 @@ function ProductFormModal({
             />
           </div>
 
-          {/* Precio / Calorías / Tiempo */}
-          <div className="grid grid-cols-3 gap-4">
+          {/* Precio / Calorías / Tiempo / Stock */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div>
               <label className="block text-sm text-gray-400 mb-1.5">Precio ($) *</label>
               <input
@@ -453,6 +536,31 @@ function ProductFormModal({
                 onChange={e => setForm(f => ({ ...f, preparation_time: e.target.value }))}
                 className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-red-600 text-sm"
                 placeholder="15"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1.5">
+                Stock (uds)
+                {parseInt(form.stock_quantity) <= STOCK_OUT && (
+                  <span className="ml-2 text-xs text-red-400 font-normal">sin stock</span>
+                )}
+                {parseInt(form.stock_quantity) > STOCK_OUT && parseInt(form.stock_quantity) <= STOCK_MIN && (
+                  <span className="ml-2 text-xs text-yellow-400 font-normal">⚠ bajo</span>
+                )}
+              </label>
+              <input
+                type="number"
+                min="0"
+                value={form.stock_quantity}
+                onChange={e => setForm(f => ({ ...f, stock_quantity: e.target.value }))}
+                className={`w-full bg-zinc-800 border rounded-lg px-4 py-2.5 text-white focus:outline-none text-sm ${
+                  parseInt(form.stock_quantity) <= STOCK_OUT
+                    ? 'border-red-600 focus:border-red-500'
+                    : parseInt(form.stock_quantity) <= STOCK_MIN
+                    ? 'border-yellow-600 focus:border-yellow-500'
+                    : 'border-zinc-700 focus:border-red-600'
+                }`}
+                placeholder="0"
               />
             </div>
           </div>

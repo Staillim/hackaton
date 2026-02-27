@@ -791,6 +791,7 @@ export const updateProduct = async (id: string, updates: {
   name?: string; description?: string; base_price?: number;
   calories?: number; active?: boolean; featured?: boolean;
   preparation_time?: number; image_url?: string; category_id?: string;
+  stock_quantity?: number;
 }) => {
   const { data, error } = await supabase
     .from('products')
@@ -806,6 +807,7 @@ export const createProduct = async (product: {
   name: string; description?: string; base_price: number;
   calories?: number; active: boolean; featured: boolean;
   preparation_time: number; image_url?: string; category_id?: string;
+  stock_quantity?: number;
 }) => {
   const { data, error } = await supabase
     .from('products')

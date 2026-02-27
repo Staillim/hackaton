@@ -20,6 +20,7 @@ export interface Product {
   featured: boolean;
   preparation_time: number;
   calories?: number;
+  stock_quantity: number;
   created_at: string;
   updated_at: string;
   category?: Category;
