@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la d:/proyects/5palos/.env*)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(ls .env*)"
+    ]
+  }
+}
