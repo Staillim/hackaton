@@ -30,12 +30,15 @@ END $$;
 -- ============================================
 -- PASO 2: Inicializar stock de productos existentes
 -- ============================================
--- Productos simples (bebidas, papas, aros) tienen stock directo
-UPDATE products 
-SET stock_quantity = 100 
-WHERE stock_quantity IS NULL OR stock_quantity = 0;
+DO $$
+BEGIN
+  -- Productos simples (bebidas, papas, aros) tienen stock directo
+  UPDATE products 
+  SET stock_quantity = 100 
+  WHERE stock_quantity IS NULL OR stock_quantity = 0;
 
-RAISE NOTICE '✅ Stock inicializado para productos existentes';
+  RAISE NOTICE '✅ Stock inicializado para productos existentes';
+END $$;
 
 -- ============================================
 -- PASO 3: Función mejorada para descontar stock
@@ -192,7 +195,10 @@ AFTER INSERT ON order_items
 FOR EACH ROW
 EXECUTE FUNCTION auto_deduct_stock_on_order();
 
-RAISE NOTICE '🎯 Trigger de descuento automático creado';
+DO $$
+BEGIN
+  RAISE NOTICE '🎯 Trigger de descuento automático creado';
+END $$;
 
 -- ============================================
 -- VERIFICACIÓN: Ver triggers activos
