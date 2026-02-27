@@ -178,7 +178,7 @@ function AdminDashboard() {
     </motion.div>
   );
 
-  // /* Acciones Rápidas — actualmente ocultadas
+  // Acciones Rápidas — Promociones y Reportes comentadas, sección oculta en el render
   const quickActions = [
     {
       label: 'Gestionar Productos',
@@ -208,7 +208,7 @@ function AdminDashboard() {
     //   href: '/admin/reports',
     //   available: true,
     // },
-  ]; // */
+  ];
 
   return (
     <div className="min-h-screen bg-black">
@@ -424,6 +424,7 @@ function AdminDashboard() {
             </div>
           </motion.div>
           */}
+        </div>
 
         {/* ─── Max — Chat del Agente ───────────────────────────────────────────── */}
         <MaxChatSection
