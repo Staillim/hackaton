@@ -816,6 +816,11 @@ export const createProduct = async (product: {
   return data;
 };
 
+export const deleteProduct = async (id: string) => {
+  const { error } = await supabase.from('products').delete().eq('id', id);
+  if (error) throw error;
+};
+
 export const addProductIngredient = async (productId: string, ingredientId: string, opts: {
   quantity: number; is_required: boolean; is_removable: boolean;
 }) => {
@@ -842,7 +847,33 @@ export const getIngredients = async () => {
   return data;
 };
 
-export const updateIngredient = async (id: string, updates: { stock_quantity?: number; available?: boolean }) => {
+export const createIngredient = async (ingredient: {
+  name: string;
+  unit?: string;
+  stock_quantity?: number;
+  min_stock_alert?: number;
+  price?: number;
+  available?: boolean;
+  is_allergen?: boolean;
+}) => {
+  const { data, error } = await supabase
+    .from('ingredients')
+    .insert({
+      name: ingredient.name,
+      unit: ingredient.unit || 'unidad',
+      stock_quantity: ingredient.stock_quantity ?? 0,
+      min_stock_alert: ingredient.min_stock_alert ?? 10,
+      price: ingredient.price ?? 0,
+      available: ingredient.available ?? true,
+      is_allergen: ingredient.is_allergen ?? false,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+};
+
+export const updateIngredient = async (id: string, updates: { stock_quantity?: number; available?: boolean; name?: string; unit?: string; min_stock_alert?: number; price?: number; is_allergen?: boolean }) => {
   console.log(`🔄 [updateIngredient] Iniciando actualización:`, { id, updates });
   
   try {

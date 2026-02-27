@@ -4,7 +4,8 @@ import {
   getAdminMetrics, getIngredients, getAllPromotions, getAllProducts, getOrders,
   getInventoryAlerts, getSalesByProductRange, getSalesByHour, getSalesByDayOfWeek,
   updateIngredient, updatePromotion, updateProduct, updateOrderStatus,
-  createPromotion, deletePromotion,
+  createPromotion, deletePromotion, createProduct, createIngredient, deleteProduct,
+  resolveAlertsByIngredient,
 } from '@/lib/supabase';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -222,6 +223,105 @@ const MAX_TOOLS = [
       required: ['product_name'],
     },
   },
+  // ── CREAR / ELIMINAR PRODUCTOS ───────────────────────────────────────────────
+  {
+    name: 'create_product',
+    description: 'Crea un nuevo producto en el menú. Úsalo cuando el admin quiera agregar un plato, bebida o acompañamiento nuevo.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Nombre del producto' },
+        description: { type: 'string', description: 'Descripción del producto (opcional)' },
+        base_price: { type: 'number', description: 'Precio base del producto' },
+        calories: { type: 'number', description: 'Calorías (opcional)' },
+        preparation_time: { type: 'number', description: 'Tiempo de preparación en minutos (por defecto 10)' },
+        active: { type: 'boolean', description: 'Si debe estar visible en el menú desde el inicio (por defecto true)' },
+        featured: { type: 'boolean', description: 'Si debe aparecer como destacado (por defecto false)' },
+      },
+      required: ['name', 'base_price'],
+    },
+  },
+  {
+    name: 'delete_product',
+    description: 'Elimina permanentemente un producto del menú. CUIDADO: acción irreversible. Pide confirmación al admin antes de ejecutar.',
+    parameters: {
+      type: 'object',
+      properties: {
+        product_name: { type: 'string', description: 'Nombre exacto o parcial del producto a eliminar' },
+      },
+      required: ['product_name'],
+    },
+  },
+  // ── CREAR / EDITAR INGREDIENTES ──────────────────────────────────────────────
+  {
+    name: 'create_ingredient',
+    description: 'Crea un nuevo ingrediente en el inventario. Úsalo cuando el admin quiera registrar un ingrediente nuevo.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Nombre del ingrediente' },
+        unit: { type: 'string', description: 'Unidad de medida: unidad, gramo, ml, kg, litro (por defecto: unidad)' },
+        stock_quantity: { type: 'number', description: 'Stock inicial (por defecto 0)' },
+        min_stock_alert: { type: 'number', description: 'Cantidad mínima antes de alertar (por defecto 10)' },
+        price: { type: 'number', description: 'Precio extra si es personalización cobrada (por defecto 0)' },
+        is_allergen: { type: 'boolean', description: 'Si es alérgeno (por defecto false)' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'update_ingredient_info',
+    description: 'Edita la información de un ingrediente (nombre, unidad, mínimo de alerta, precio extra). Diferente de update_ingredient_stock que solo cambia la cantidad.',
+    parameters: {
+      type: 'object',
+      properties: {
+        ingredient_name: { type: 'string', description: 'Nombre actual del ingrediente a editar' },
+        new_name: { type: 'string', description: 'Nuevo nombre (opcional)' },
+        unit: { type: 'string', description: 'Nueva unidad de medida (opcional)' },
+        min_stock_alert: { type: 'number', description: 'Nuevo umbral de alerta (opcional)' },
+        price: { type: 'number', description: 'Nuevo precio extra (opcional)' },
+        is_allergen: { type: 'boolean', description: 'Si es alérgeno o no (opcional)' },
+      },
+      required: ['ingredient_name'],
+    },
+  },
+  // ── PEDIDOS ──────────────────────────────────────────────────────────────────
+  {
+    name: 'get_order_detail',
+    description: 'Obtiene el detalle completo de un pedido específico: items, cantidades, customizaciones, total y estado. Úsalo cuando el admin quiere ver qué lleva un pedido concreto.',
+    parameters: {
+      type: 'object',
+      properties: {
+        order_identifier: {
+          type: 'string',
+          description: 'Número de pedido (ej: "001"), nombre del cliente, o "último" para el más reciente',
+        },
+      },
+      required: ['order_identifier'],
+    },
+  },
+  // ── INVENTARIO ───────────────────────────────────────────────────────────────
+  {
+    name: 'bulk_update_stock',
+    description: 'Actualiza el stock de MÚLTIPLES ingredientes a la vez con una sola instrucción. Úsalo cuando el admin diga "llegó el pedido" o liste varios ingredientes de una vez.',
+    parameters: {
+      type: 'object',
+      properties: {
+        updates: {
+          type: 'array',
+          description: 'Lista de actualizaciones de stock',
+          items: {
+            type: 'object',
+            properties: {
+              ingredient_name: { type: 'string', description: 'Nombre del ingrediente' },
+              quantity: { type: 'number', description: 'Nueva cantidad de stock' },
+            },
+          },
+        },
+      },
+      required: ['updates'],
+    },
+  },
 ];
 
 export async function POST(request: NextRequest) {
@@ -266,7 +366,7 @@ export async function POST(request: NextRequest) {
       const model = genAI.getGenerativeModel({
         model: 'gemini-2.5-flash',
         systemInstruction: systemContext,
-        tools: [{ functionDeclarations: MAX_TOOLS }],
+        tools: [{ functionDeclarations: MAX_TOOLS as any }],
       });
 
       const chat = model.startChat({
@@ -290,7 +390,7 @@ export async function POST(request: NextRequest) {
       
       while (functionCall) {
         const functionName = functionCall.name;
-        const args = functionCall.args;
+        const args = functionCall.args as any;
 
         console.log(`🔧 Max ejecutando: ${functionName}`, JSON.stringify(args, null, 2));
 
@@ -347,6 +447,24 @@ export async function POST(request: NextRequest) {
               break;
             case 'get_product_detail':
               actionResult = await executeGetProductDetail(args.product_name, args.days || 30);
+              break;
+            case 'create_product':
+              actionResult = await executeCreateProduct(args);
+              break;
+            case 'delete_product':
+              actionResult = await executeDeleteProduct(args.product_name);
+              break;
+            case 'create_ingredient':
+              actionResult = await executeCreateIngredient(args);
+              break;
+            case 'update_ingredient_info':
+              actionResult = await executeUpdateIngredientInfo(args);
+              break;
+            case 'get_order_detail':
+              actionResult = await executeGetOrderDetail(args.order_identifier);
+              break;
+            case 'bulk_update_stock':
+              actionResult = await executeBulkUpdateStock(args.updates);
               break;
             default:
               actionResult = { type: functionName, description: 'Acción desconocida', success: false };
@@ -743,6 +861,165 @@ async function executeGetProductDetail(name: string, days: number): Promise<Acti
   return { type: 'get_product_detail', description: lines.join('\n'), success: true };
 }
 
+async function executeCreateProduct(args: any): Promise<ActionResult> {
+  try {
+    const product = await createProduct({
+      name: args.name,
+      description: args.description || '',
+      base_price: args.base_price,
+      calories: args.calories || null,
+      preparation_time: args.preparation_time || 10,
+      active: args.active !== false,
+      featured: args.featured || false,
+    });
+    return {
+      type: 'create_product',
+      description: `Producto "${product.name}" creado. Precio: $${product.base_price}. Estado: ${product.active ? 'activo en el menú' : 'inactivo'}`,
+      success: true,
+    };
+  } catch (e: any) {
+    return { type: 'create_product', description: `Error al crear producto: ${e.message}`, success: false };
+  }
+}
+
+async function executeDeleteProduct(name: string): Promise<ActionResult> {
+  const products = await getAllProducts();
+  const match = findByName(products || [], name);
+  if (!match) return { type: 'delete_product', description: `No encontré producto "${name}"`, success: false };
+  try {
+    await deleteProduct(match.id);
+    return { type: 'delete_product', description: `Producto "${match.name}" eliminado permanentemente del sistema.`, success: true };
+  } catch (e: any) {
+    return { type: 'delete_product', description: `Error al eliminar: ${e.message}`, success: false };
+  }
+}
+
+async function executeCreateIngredient(args: any): Promise<ActionResult> {
+  try {
+    const ingredient = await createIngredient({
+      name: args.name,
+      unit: args.unit || 'unidad',
+      stock_quantity: args.stock_quantity ?? 0,
+      min_stock_alert: args.min_stock_alert ?? 10,
+      price: args.price ?? 0,
+      is_allergen: args.is_allergen ?? false,
+    });
+    return {
+      type: 'create_ingredient',
+      description: `Ingrediente "${ingredient.name}" creado. Stock inicial: ${ingredient.stock_quantity} ${ingredient.unit}. Mínimo alerta: ${ingredient.min_stock_alert}.`,
+      success: true,
+    };
+  } catch (e: any) {
+    return { type: 'create_ingredient', description: `Error al crear ingrediente: ${e.message}`, success: false };
+  }
+}
+
+async function executeUpdateIngredientInfo(args: any): Promise<ActionResult> {
+  const ingredients = await getIngredients();
+  const match = findByName(ingredients || [], args.ingredient_name);
+  if (!match) return { type: 'update_ingredient_info', description: `No encontré ingrediente "${args.ingredient_name}"`, success: false };
+
+  const updates: any = {};
+  const changes: string[] = [];
+  if (args.new_name) { updates.name = args.new_name; changes.push(`nombre → "${args.new_name}"`); }
+  if (args.unit) { updates.unit = args.unit; changes.push(`unidad → ${args.unit}`); }
+  if (args.min_stock_alert !== undefined) { updates.min_stock_alert = args.min_stock_alert; changes.push(`alerta mínima → ${args.min_stock_alert}`); }
+  if (args.price !== undefined) { updates.price = args.price; changes.push(`precio extra → $${args.price}`); }
+  if (args.is_allergen !== undefined) { updates.is_allergen = args.is_allergen; changes.push(args.is_allergen ? 'marcado como alérgeno' : 'alérgeno removido'); }
+
+  if (changes.length === 0) {
+    return { type: 'update_ingredient_info', description: 'No se especificaron campos a actualizar', success: false };
+  }
+  await updateIngredient(match.id, updates);
+  return {
+    type: 'update_ingredient_info',
+    description: `Ingrediente "${match.name}" actualizado: ${changes.join(', ')}`,
+    success: true,
+  };
+}
+
+async function executeGetOrderDetail(identifier: string): Promise<ActionResult> {
+  const orders = await getOrders();
+  let match: any = null;
+
+  const id = identifier.toLowerCase().trim();
+  if (id === 'último' || id === 'ultimo' || id === 'last') {
+    match = (orders || [])[0];
+  } else {
+    match = (orders || []).find((o: any) =>
+      o.order_number?.toLowerCase().includes(id) ||
+      (o.customer_name || '').toLowerCase().includes(id) ||
+      (o.customer_email || '').toLowerCase().includes(id)
+    );
+  }
+
+  if (!match) return { type: 'get_order_detail', description: `No encontré pedido "${identifier}"`, success: false };
+
+  const statusLabel: Record<string, string> = {
+    pending: 'Pendiente', confirmed: 'Confirmado', preparing: 'En preparación',
+    completed: 'Completado', cancelled: 'Cancelado',
+  };
+
+  const items = (match.items || []).map((item: any) => {
+    let line = `  • ${item.quantity}x ${item.product?.name || 'Producto'} — $${parseFloat(String(item.unit_price)).toFixed(2)}/ud`;
+    if (item.customizations && item.customizations.length > 0) {
+      line += ` [${item.customizations.map((c: any) => c.name || c).join(', ')}]`;
+    }
+    if (item.notes) line += ` (${item.notes})`;
+    return line;
+  });
+
+  const lines = [
+    `Pedido ${match.order_number} — ${statusLabel[match.status] || match.status}`,
+    `Cliente: ${match.customer_name || 'Sin nombre'} | ${match.customer_email || ''}`,
+    `Fecha: ${new Date(match.created_at).toLocaleString('es-MX')}`,
+    ``,
+    `Items (${items.length}):`,
+    ...items,
+    items.length === 0 ? '  (sin items registrados)' : '',
+    ``,
+    `Subtotal: $${parseFloat(String(match.subtotal_amount || 0)).toFixed(2)}`,
+    match.discount_amount > 0 ? `Descuento: -$${parseFloat(String(match.discount_amount)).toFixed(2)}` : '',
+    `Total: $${parseFloat(String(match.final_amount)).toFixed(2)}`,
+  ].filter(l => l !== '');
+
+  return { type: 'get_order_detail', description: lines.join('\n'), success: true };
+}
+
+async function executeBulkUpdateStock(updates: Array<{ ingredient_name: string; quantity: number }>): Promise<ActionResult> {
+  if (!updates || updates.length === 0) {
+    return { type: 'bulk_update_stock', description: 'No se especificaron ingredientes a actualizar', success: false };
+  }
+
+  const ingredients = await getIngredients();
+  const results: string[] = [];
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const upd of updates) {
+    const match = findByName(ingredients || [], upd.ingredient_name);
+    if (!match) {
+      results.push(`  ❌ "${upd.ingredient_name}" — no encontrado`);
+      failCount++;
+      continue;
+    }
+    try {
+      await updateIngredient(match.id, { stock_quantity: upd.quantity });
+      results.push(`  ✅ ${match.name}: ${upd.quantity} ${match.unit}`);
+      successCount++;
+    } catch (e: any) {
+      results.push(`  ❌ ${match.name}: error — ${e.message}`);
+      failCount++;
+    }
+  }
+
+  return {
+    type: 'bulk_update_stock',
+    description: [`Actualización masiva de stock (${successCount} exitosos, ${failCount} fallidos):`, ...results].join('\n'),
+    success: successCount > 0,
+  };
+}
+
 // ─── Utilidad de búsqueda por nombre ─────────────────────────────────────────
 function findByName(list: any[], query: string) {
   const q = query.toLowerCase();
@@ -808,12 +1085,42 @@ IDENTIDAD:
 - Si algo no está en los datos, lo dices sin inventar.
 - Siempre en español.
 - IMPORTANTE: Si el admin dice "listo ya traje X unidades", "agregalas", "al faltante", etc., usa el CONTEXTO de la conversación anterior para saber a qué ingrediente se refiere.
+- Para acciones destructivas (eliminar producto), confirma brevemente antes de ejecutar si no lo ha confirmado ya.
 
-CAPACIDADES:
-Ingredientes: actualizar stock, marcar disponible/no disponible
-Productos: activar/desactivar, destacar, cambiar precio, editar nombre/descripción/calorías/tiempo
-Promociones: activar/desactivar, crear nuevas, editar valor/mínimo/usos, eliminar
-Pedidos: cambiar estado (confirmar, preparando, completado, cancelado)
+CAPACIDADES COMPLETAS:
+
+📦 INGREDIENTES:
+  - Actualizar stock de un ingrediente → update_ingredient_stock
+  - Actualizar stock de VARIOS ingredientes a la vez → bulk_update_stock
+  - Marcar disponible/no disponible → toggle_ingredient_available
+  - Editar info (nombre, unidad, alerta mínima, precio extra) → update_ingredient_info
+  - Crear nuevo ingrediente → create_ingredient
+  - Ver análisis completo del inventario → analyze_stock
+
+🍔 PRODUCTOS:
+  - Activar/desactivar del menú → toggle_product
+  - Destacar/quitar de destacados → set_product_featured
+  - Cambiar precio → update_product_price
+  - Editar nombre, descripción, calorías, tiempo → update_product_details
+  - Ver detalle y ventas de un producto → get_product_detail
+  - Crear nuevo producto → create_product
+  - Eliminar producto → delete_product
+
+🏷️ PROMOCIONES:
+  - Activar/desactivar → toggle_promotion
+  - Crear nueva → create_promotion
+  - Editar descuento, mínimo de compra, usos → update_promotion_value
+  - Eliminar → delete_promotion
+
+📋 PEDIDOS:
+  - Ver pedidos activos en este momento → get_active_orders
+  - Ver detalle completo de un pedido (items, customizaciones) → get_order_detail
+  - Cambiar estado (confirmar, preparando, completado, cancelado) → update_order_status
+
+📊 ANÁLISIS:
+  - Análisis de ventas por período (7/14/30 días) → analyze_sales_period
+  - Horas pico y días con más pedidos → analyze_sales_period
+  - Inventario crítico con recomendaciones → analyze_stock
 
 DATOS DEL RESTAURANTE:
 
@@ -827,13 +1134,13 @@ ${peakHour ? `Hora pico: ${peakHour.hour}:00 h (${peakHour.orders} pedidos)` : '
 INVENTARIO CRÍTICO:
 ${stockInfo}
 
-INGREDIENTES:
+INGREDIENTES (${(ingredients || []).length} total):
 ${ingList}
 
 PROMOCIONES:
 ${promoList}
 
-PRODUCTOS:
+PRODUCTOS (${(products || []).length} total):
 ${prodList}
 
 PEDIDOS RECIENTES:
