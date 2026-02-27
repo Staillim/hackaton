@@ -262,9 +262,9 @@ export async function POST(request: NextRequest) {
         parts: [{ text: m.content }],
       }));
 
-      // Crear modelo con herramientas
+      // Crear modelo con herramientas (usando nombre compatible con v1beta)
       const model = genAI.getGenerativeModel({
-        model: 'gemini-1.5-flash',
+        model: 'gemini-pro',
         systemInstruction: systemContext,
         tools: [{ functionDeclarations: MAX_TOOLS }],
       });

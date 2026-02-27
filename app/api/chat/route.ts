@@ -358,10 +358,9 @@ export async function POST(request: NextRequest) {
     console.log('✅ System prompt generado:', systemPrompt.substring(0, 150) + '...');
 
     // Lista de modelos a probar (en orden de prioridad)
+    // Nota: usando nombres compatibles con API v1beta
     const modelPriority = [
-      'gemini-1.5-pro',      // Más potente (para prompts complejos)
-      'gemini-1.5-flash',    // Rápido y económico (fallback)
-      'gemini-pro',          // Legacy (último recurso)
+      'gemini-pro',          // Modelo estándar disponible en v1beta
     ];
 
     let model = null;
