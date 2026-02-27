@@ -33,7 +33,8 @@ const parseCartActions = (message: string): {
 }[] => {
   // Formato: [ADD_TO_CART:ProductName:Quantity:Additions:Removals:Notes]
   // Additions y Removals son listas separadas por coma
-  const regex = /\[ADD_TO_CART:(.*?):(\d+)(?::([^:\]]*?))?(?::([^:\]]*?))?(?::([^:\]]*?))?\]/g;
+  // El último campo (notes) puede contener ":"
+  const regex = /\[ADD_TO_CART:([^:]+):(\d+):([^:]*):([^:]*):(.*?)\]/g;
   const actions: { 
     product: string; 
     quantity: number;
@@ -43,12 +44,22 @@ const parseCartActions = (message: string): {
   }[] = [];
   let match;
 
+  console.log('🔍 [parseCartActions] Buscando marcadores en:', message);
+
   while ((match = regex.exec(message)) !== null) {
     const product = match[1].trim();
     const quantity = parseInt(match[2], 10);
     const additionsStr = match[3]?.trim();
     const removalsStr = match[4]?.trim();
     const notesStr = match[5]?.trim();
+
+    console.log('✅ [parseCartActions] Match encontrado:', {
+      product,
+      quantity,
+      additionsStr,
+      removalsStr,
+      notesStr
+    });
 
     actions.push({
       product,
@@ -240,6 +251,21 @@ ${bestSellersText ? `⭐ Populares: ${bestSellersText}` : ''}${preferencesText}
 FORMATO DE MARCADORES (USA SOLO AL FINAL):
 [ADD_TO_CART:NombreProducto:Cantidad:Extras:Quitar:Notas]
 [CONFIRM_ORDER]
+
+⚠️ IMPORTANTE SOBRE MARCADORES:
+- NombreProducto: Nombre EXACTO del producto (sin bebidas ni extras del combo)
+- Cantidad: Número
+- Extras: SOLO ingredientes ADICIONALES (Aguacate, Queso extra, Bacon). NO incluyas bebidas
+- Quitar: Ingredientes a remover (Cebolla, Tomate)
+- Notas: Comentarios especiales del cliente
+- ❌ NUNCA pongas "Bebida: X" en Extras o Notas - las bebidas YA vienen con el combo
+
+Ejemplo CORRECTO:
+[ADD_TO_CART:Combo Deluxe:1:Aguacate::] ← Solo el extra (aguacate), bebida no se menciona
+[ADD_TO_CART:Hamburguesa Clásica:1::Cebolla:Sin salsas] ← Sin cebolla, nota especial
+
+Ejemplo INCORRECTO:
+❌ [ADD_TO_CART:Combo Deluxe:1:Aguacate:Bebida: Fanta:] ← NO incluir bebida
 
 FLUJO CORRECTO (EJEMPLOS):
 

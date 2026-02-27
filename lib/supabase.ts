@@ -195,31 +195,90 @@ export const trackAnalytics = async (eventType: string, eventData: any, sessionI
 
 // Chat conversation functions
 export const saveChatMessage = async (sessionId: string, role: 'user' | 'assistant', content: string, metadata?: any) => {
-  const { data, error } = await supabase
-    .from('chat_conversations')
-    .insert({
-      session_id: sessionId,
+  try {
+    // Primero, verificar si existe la conversación
+    const { data: existing, error: fetchError } = await supabase
+      .from('chat_conversations')
+      .select('messages')
+      .eq('session_id', sessionId)
+      .maybeSingle();
+
+    if (fetchError && fetchError.code !== 'PGRST116') {
+      console.error('❌ Error buscando conversación:', fetchError);
+      throw fetchError;
+    }
+
+    const newMessage = {
       role,
       content,
       metadata,
-    })
-    .select()
-    .single();
+      timestamp: new Date().toISOString(),
+    };
 
-  if (error) throw error;
-  return data;
+    if (existing) {
+      // Actualizar: agregar mensaje al array existente
+      const currentMessages = existing.messages || [];
+      const updatedMessages = [...currentMessages, newMessage];
+
+      const { data, error } = await supabase
+        .from('chat_conversations')
+        .update({ 
+          messages: updatedMessages,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('session_id', sessionId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('❌ Error actualizando mensajes:', error);
+        throw error;
+      }
+      return data;
+    } else {
+      // Crear nueva conversación con el mensaje
+      const { data, error } = await supabase
+        .from('chat_conversations')
+        .insert({
+          session_id: sessionId,
+          messages: [newMessage],
+          status: 'active',
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('❌ Error creando conversación:', error);
+        throw error;
+      }
+      return data;
+    }
+  } catch (error) {
+    console.error('❌ Error en saveChatMessage:', error);
+    // No lanzar el error para que no rompa el flujo del chat
+    return null;
+  }
 };
 
 export const getChatHistory = async (sessionId: string, limit: number = 50) => {
   const { data, error } = await supabase
     .from('chat_conversations')
-    .select('*')
+    .select('messages')
     .eq('session_id', sessionId)
-    .order('created_at', { ascending: true })
-    .limit(limit);
+    .maybeSingle();
 
-  if (error) throw error;
-  return data || [];
+  if (error) {
+    console.error('❌ Error obteniendo historial:', error);
+    return [];
+  }
+
+  if (!data || !data.messages) {
+    return [];
+  }
+
+  // Retornar los últimos N mensajes
+  const messages = data.messages.slice(-limit);
+  return messages;
 };
 
 export const getBestSellingProducts = async (limit: number = 5) => {
