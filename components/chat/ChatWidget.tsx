@@ -241,11 +241,7 @@ export default function ChatWidget() {
           }
         });
 
-        // Abrir el carrito automáticamente
-        setTimeout(() => {
-          const event = new CustomEvent('openCart');
-          window.dispatchEvent(event);
-        }, 1000);
+        // NO abrimos el carrito automáticamente - se abre solo cuando la orden se confirme
       }
 
       // Procesar confirmación de orden si se detectó
