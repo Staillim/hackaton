@@ -132,6 +132,7 @@ const getProductsByNames = async (productNames: string[]) => {
   if (productNames.length === 0) return [];
 
   // 🔥 BUSCAR EN AMBAS TABLAS: products E ingredients
+  // IMPORTANTE: Priorizar productos sobre ingredientes
   const [productsResult, ingredientsResult] = await Promise.all([
     supabase.from('products').select('*').eq('active', true),
     supabase.from('ingredients').select('*').eq('available', true).gt('stock_quantity', 0)
@@ -147,44 +148,69 @@ const getProductsByNames = async (productNames: string[]) => {
   const products = productsResult.data || [];
   const ingredients = ingredientsResult.data || [];
   
-  // Convertir ingredientes a formato compatible con productos
-  const ingredientsAsProducts = ingredients.map(ing => ({
+  // 🚫 EXCLUIR ingredientes que son bebidas principales (deben ser productos)
+  // Las bebidas NO deberían estar en ingredients, son productos finales
+  const ingredientBlacklist = [
+    'coca-cola', 'cocacola', 'coca cola',
+    'sprite', 'fanta', 'pepsi', 
+    'agua', 'water',
+    'refresco', 'soda', 'gaseosa'
+  ];
+  
+  const filteredIngredients = ingredients.filter(ing => {
+    const nameLower = ing.name.toLowerCase();
+    return !ingredientBlacklist.some(blocked => nameLower.includes(blocked));
+  });
+  
+  // Convertir ingredientes filtrados a formato compatible con productos
+  const ingredientsAsProducts = filteredIngredients.map(ing => ({
     id: ing.id,
     name: ing.name,
-    base_price: ing.price || 1.99, // Precio por defecto si no tiene
-    description: `Ingrediente: ${ing.name}`,
+    base_price: ing.price || 1.99,
+    description: `Extra: ${ing.name}`,
     active: ing.available,
     category_id: null,
     image_url: null,
     priority_score: 50,
     stock_quantity: ing.stock_quantity,
-    _source: 'ingredients' // Marcar origen para saber de dónde viene
+    _source: 'ingredients' // Marcar origen
   }));
 
-  // Combinar ambas fuentes
+  // Combinar: productos primero, ingredientes después (prioridad)
   const allItems = [...products, ...ingredientsAsProducts];
   
   console.log('🗂️ Productos en BD:', products.map(p => p.name).join(', '));
-  console.log('🥤 Ingredientes disponibles:', ingredients.map(i => i.name).join(', '));
+  console.log('🥤 Ingredientes disponibles (filtrados):', filteredIngredients.map(i => i.name).join(', '));
+  console.log('🚫 Ingredientes excluidos (son productos):', 
+    ingredients.filter(i => !filteredIngredients.includes(i)).map(i => i.name).join(', ') || 'Ninguno');
   console.log('📦 TOTAL items disponibles:', allItems.length);
   
   const lowerNames = productNames.map(n => n.toLowerCase().trim());
 
-  // Buscar con sistema de scoring inteligente en AMBAS fuentes
+  // Buscar con sistema de scoring inteligente
+  // PRIORIZA productos sobre ingredientes
   const matched = lowerNames.map(searchName => {
-    // Calcular score para cada item (productos + ingredientes)
+    // Calcular score para cada item
     const itemsWithScore = allItems.map(item => ({
       product: item,
-      score: calculateMatchScore(searchName, item.name)
+      score: calculateMatchScore(searchName, item.name),
+      isProduct: !item._source || item._source !== 'ingredients'
     }));
 
-    // Ordenar por score descendente
-    itemsWithScore.sort((a, b) => b.score - a.score);
+    // Ordenar: primero por si es producto (true = prioridad), luego por score
+    itemsWithScore.sort((a, b) => {
+      // Si ambos tienen el mismo isProduct, ordenar por score
+      if (a.isProduct === b.isProduct) {
+        return b.score - a.score;
+      }
+      // Si uno es producto y otro ingrediente, priorizar producto
+      return a.isProduct ? -1 : 1;
+    });
 
     // Tomar el mejor match si tiene score > 0
     const best = itemsWithScore[0];
     if (best && best.score > 0) {
-      const source = best.product._source === 'ingredients' ? '[INGREDIENTE]' : '[PRODUCTO]';
+      const source = best.product._source === 'ingredients' ? '[INGREDIENTE-EXTRA]' : '[PRODUCTO]';
       console.log(`✅ Match: "${searchName}" → "${best.product.name}" ${source} (score: ${best.score})`);
       return best.product;
     } else {
@@ -319,9 +345,14 @@ const getEnhancedSystemPrompt = async (sessionId: string, userEmail?: string) =>
       const lowStock = (allIngredients as any[]).filter(
         (i: any) => i.available && i.stock_quantity > 0 && i.stock_quantity <= i.min_stock_alert
       );
-      const availableIngredients = (allIngredients as any[]).filter(
-        (i: any) => i.available && i.stock_quantity > i.min_stock_alert && i.price
-      );
+      // Blacklist de bebidas (ya son productos reales, no ingredientes)
+      const beverageKeywords = ['coca', 'sprite', 'fanta', 'pepsi', 'agua', 'water', 'refresco', 'soda', 'gaseosa'];
+      
+      const availableIngredients = (allIngredients as any[]).filter((i: any) => {
+        const nameLower = i.name.toLowerCase();
+        const isBeverage = beverageKeywords.some(keyword => nameLower.includes(keyword));
+        return i.available && i.stock_quantity > i.min_stock_alert && i.price && !isBeverage;
+      });
       
       if (unavailable.length > 0) {
         unavailableText = `\n\n❌ INGREDIENTES NO DISPONIBLES HOY (NO OFRECER NUNCA): ${unavailable.map((i: any) => i.name).join(', ')}`;
@@ -330,11 +361,11 @@ const getEnhancedSystemPrompt = async (sessionId: string, userEmail?: string) =>
         lowStockText = `\n⚠️ STOCK LIMITADO (unidades exactas): ${lowStock.map((i: any) => `${i.name} (${i.stock_quantity} und.)`).join(', ')}`;
       }
       
-      // 🥤 Ingredientes que se pueden vender como productos individuales (ej: bebidas)
+      // 🥤 Ingredientes/extras que se pueden vender individualmente (NO incluye bebidas, son productos)
       if (availableIngredients.length > 0) {
         const sellableItems = availableIngredients.filter((i: any) => i.price && i.price > 0);
         if (sellableItems.length > 0) {
-          ingredientsMenuText = `\n\n🛒 PRODUCTOS INDIVIDUALES DISPONIBLES:\n${sellableItems.map((i: any) => `- ${i.name} $${i.price.toFixed(2)}`).join('\n')}`;
+          ingredientsMenuText = `\n\n🛒 EXTRAS VENDIBLES (no bebidas):\n${sellableItems.map((i: any) => `- ${i.name} $${i.price.toFixed(2)}`).join('\n')}`;
         }
       }
     }
@@ -403,18 +434,20 @@ FORMATO DE MARCADORES (USA SOLO AL FINAL):
 ⚠️ DEBES usar el nombre EXACTO del producto tal como aparece en el MENÚ COMPLETO
 ⚠️ TÚ eres la IA - INTERPRETA lo que dice el cliente y busca en el menú
 ⚠️ NO uses tabla fija de traducción - PIENSA y busca en el menú dinámicamente
-⚠️ BUSCA EN TODO EL MENÚ: hamburguesas, combos, acompañamientos, bebidas Y productos individuales
+⚠️ BUSCA PRIMERO en el menú principal (hamburguesas, combos, bebidas)
+⚠️ Las bebidas SIEMPRE están en la sección "🥤 Bebidas" del menú principal
 
 💡 CÓMO INTERPRETAR (100% IA - TÚ DECIDES):
 1. Cliente dice algo como "coca", "cocacola", "coca-cola"
-2. TÚ revisas el menú completo arriba (INCLUYENDO productos individuales disponibles)
-3. TÚ ves que existe "Coca-Cola 500ml $1.99" (en bebidas O en productos individuales)
+2. TÚ revisas el menú completo arriba
+3. TÚ ves que existe "Coca-Cola 500ml $1.99" EN LA SECCIÓN DE BEBIDAS
 4. TÚ escribes: [ADD_TO_CART:Coca-Cola 500ml:1:::]
 
-🔍 IMPORTANTE - FUENTES DE BÚSQUEDA:
-- Busca PRIMERO en el menú principal (hamburguesas, combos, bebidas)
-- Si no encuentras, busca en "PRODUCTOS INDIVIDUALES DISPONIBLES"
-- El sistema buscará en productos E ingredientes automáticamente
+🔍 IMPORTANTE - PRIORIDAD DE BÚSQUEDA:
+- PRIMERO: Busca en el menú principal (🍔 🎁 🍟 🥤)
+- SEGUNDO: Si no existe ahí, busca en "EXTRAS VENDIBLES"
+- Las BEBIDAS están SOLO en "🥤 Bebidas", NUNCA en extras
+- El sistema buscará automáticamente en la base de datos
 - TÚ solo usa el nombre exacto que veas en el menú
 TÚ preguntas: "¿Coca-Cola de 500ml ($1.99) o de 1 litro ($2.99)?"
 

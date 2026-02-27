@@ -308,7 +308,7 @@ export default function CartWidget() {
                           <img
                             src={item.product.image_url || 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=200'}
                             alt={item.product.name}
-                            className="w-20 h-20 object-cover rounded-lg"
+                            className="w-20 h-20 object-contain rounded-lg bg-zinc-900"
                           />
                           <div className="flex-1">
                             <h3 className="font-semibold text-white mb-1">

@@ -36,13 +36,13 @@ export default function ProductCard({ product, index }: ProductCardProps) {
       )}
 
       {/* Image */}
-      <div className="relative h-56 overflow-hidden bg-zinc-800">
+      <div className="relative h-56 overflow-hidden bg-zinc-900">
         <img
           src={product.image_url || 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400'}
           alt={product.name}
-          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+          className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500"
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent pointer-events-none" />
       </div>
 
       {/* Content */}
