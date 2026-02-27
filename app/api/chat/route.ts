@@ -359,10 +359,9 @@ export async function POST(request: NextRequest) {
 
     // Lista de modelos a probar (en orden de prioridad)
     const modelPriority = [
-      'gemini-pro-latest',
-      'gemini-2.5-pro',
-      'gemini-2.0-flash',
-      'gemini-2.5-flash',
+      'gemini-1.5-pro',      // Más potente (para prompts complejos)
+      'gemini-1.5-flash',    // Rápido y económico (fallback)
+      'gemini-pro',          // Legacy (último recurso)
     ];
 
     let model = null;
